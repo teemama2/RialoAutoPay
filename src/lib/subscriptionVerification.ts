@@ -6,7 +6,6 @@ import {
   type SubscriptionInstruction,
 } from "@rialo/ts-cdk";
 
-import { rialoClient } from "./rialoClient";
 import {
   buildNativeDestroyInstruction,
   deriveSubscriptionAddress,
@@ -103,6 +102,246 @@ export function getUtcPaymentTimestampRange(
   ];
 }
 
+
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  ) {
+    return value as JsonRecord;
+  }
+
+  return {};
+}
+
+function parseRpcBigInt(value: unknown, label: string): bigint {
+  if (typeof value === "bigint") {
+    return value;
+  }
+
+  if (
+    typeof value === "number" &&
+    Number.isSafeInteger(value)
+  ) {
+    return BigInt(value);
+  }
+
+  if (
+    typeof value === "string" &&
+    /^-?\d+$/.test(value)
+  ) {
+    return BigInt(value);
+  }
+
+  throw new Error(`Rialo returned an invalid ${label}.`);
+}
+
+function normalizeInstructionData(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) {
+    return new Uint8Array(value);
+  }
+
+  if (
+    Array.isArray(value) &&
+    value.every(
+      (byte) =>
+        typeof byte === "number" &&
+        Number.isInteger(byte) &&
+        byte >= 0 &&
+        byte <= 255,
+    )
+  ) {
+    return Uint8Array.from(value);
+  }
+
+  throw new Error(
+    "Rialo returned instruction data in an unsupported format.",
+  );
+}
+
+/**
+ * Rialo 0.18.1 returns snake_case JSON-RPC fields.
+ * Normalize them because its SDK 0.18.1 getSubscription
+ * adapter currently reads camelCase fields and drops some data.
+ */
+function normalizeSubscriptionRecord(value: unknown): Subscription {
+  const raw = asRecord(value);
+
+  if (
+    raw.kind !== "Persistent" &&
+    raw.kind !== "OneShot"
+  ) {
+    throw new Error("Rialo returned an invalid subscription kind.");
+  }
+
+  if (
+    typeof raw.topic !== "string" ||
+    typeof raw.subscriber !== "string"
+  ) {
+    throw new Error(
+      "Rialo returned a subscription without its topic or subscriber.",
+    );
+  }
+
+  const rawEventAccount =
+    raw.eventAccount ?? raw.event_account;
+
+  const eventAccount =
+    typeof rawEventAccount === "string"
+      ? rawEventAccount
+      : undefined;
+
+  const rawRange =
+    raw.timestampRange ?? raw.timestamp_range;
+
+  let timestampRange: [bigint, bigint] | undefined;
+
+  if (rawRange != null) {
+    if (!Array.isArray(rawRange) || rawRange.length !== 2) {
+      throw new Error(
+        "Rialo returned an invalid subscription timestamp range.",
+      );
+    }
+
+    timestampRange = [
+      parseRpcBigInt(rawRange[0], "timestamp range start"),
+      parseRpcBigInt(rawRange[1], "timestamp range end"),
+    ];
+  }
+
+  if (!Array.isArray(raw.instructions)) {
+    throw new Error(
+      "Rialo returned an invalid subscription instruction list.",
+    );
+  }
+
+  const instructions = raw.instructions.map(
+    (value, instructionIndex) => {
+      const instruction = asRecord(value);
+
+      const programId =
+        instruction.programId ?? instruction.program_id;
+
+      if (typeof programId !== "string") {
+        throw new Error(
+          `Rialo instruction ${instructionIndex + 1} has no program ID.`,
+        );
+      }
+
+      if (!Array.isArray(instruction.accounts)) {
+        throw new Error(
+          `Rialo instruction ${instructionIndex + 1} has an invalid account list.`,
+        );
+      }
+
+      const accounts = instruction.accounts.map(
+        (value, accountIndex) => {
+          const account = asRecord(value);
+
+          const pubkey = account.pubkey;
+          const isSigner =
+            account.isSigner ?? account.is_signer;
+          const isWritable =
+            account.isWritable ?? account.is_writable;
+
+          if (
+            typeof pubkey !== "string" ||
+            typeof isSigner !== "boolean" ||
+            typeof isWritable !== "boolean"
+          ) {
+            throw new Error(
+              `Rialo instruction ${instructionIndex + 1}, account ${accountIndex + 1} has invalid metadata.`,
+            );
+          }
+
+          return {
+            pubkey,
+            isSigner,
+            isWritable,
+          };
+        },
+      );
+
+      return {
+        programId,
+        accounts,
+        data: normalizeInstructionData(instruction.data),
+      };
+    },
+  );
+
+  return {
+    kind: raw.kind,
+    topic: raw.topic,
+    subscriber: raw.subscriber,
+    eventAccount,
+    timestampRange,
+    instructions,
+  };
+}
+
+async function fetchSubscriptionRecordFromRpc(
+  subscriber: PublicKey,
+  nonce: string,
+): Promise<Subscription> {
+  const response = await fetch("/rialo-rpc", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 41,
+      method: "getSubscription",
+      params: [
+        {
+          subscriber: subscriber.toString(),
+          nonce,
+        },
+      ],
+    }),
+  });
+
+  let payload: JsonRecord;
+
+  try {
+    payload = asRecord(await response.json());
+  } catch {
+    throw new Error(
+      "The Rialo subscription response was not valid JSON.",
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `Rialo subscription lookup failed with HTTP ${response.status}.`,
+    );
+  }
+
+  if (payload.error) {
+    const rpcError = asRecord(payload.error);
+
+    throw new Error(
+      typeof rpcError.message === "string"
+        ? rpcError.message
+        : "Rialo RPC could not retrieve the subscription.",
+    );
+  }
+
+  const result = asRecord(payload.result);
+
+  if (result.subscription == null) {
+    throw new Error(
+      "Rialo has not returned an active subscription record.",
+    );
+  }
+
+  return normalizeSubscriptionRecord(result.subscription);
+}
+
 function sameBytes(
   first: Uint8Array,
   second: Uint8Array,
@@ -165,9 +404,11 @@ function verifyInstruction(
  * Checks the subscription record returned by the Rialo SDK.
  */
 export function assertSubscriptionRecordMatches(
-  subscription: Subscription,
+  subscriptionRecord: unknown,
   expected: SubscriptionVerificationInput,
 ): void {
+  const subscription = normalizeSubscriptionRecord(subscriptionRecord);
+
   const subscriber = PublicKey.fromString(
     expected.subscriberAddress,
   );
@@ -296,7 +537,7 @@ export async function verifyNativeSubscriptionRegistration(
     let subscription: Subscription;
 
     try {
-      subscription = await rialoClient.getSubscription(
+      subscription = await fetchSubscriptionRecordFromRpc(
         subscriber,
         expected.nonce,
       );

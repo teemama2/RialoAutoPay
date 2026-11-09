@@ -210,7 +210,8 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
         const canCheckRegistered =
           (
             payment.status === "registered" ||
-            payment.status === "verification_pending"
+            payment.status === "verification_pending" ||
+            payment.status === "verification_failed"
           ) &&
           Boolean(payment.subscriptionAddress);
 
@@ -287,16 +288,20 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
         if (
           (
             payment.status !== "registered" &&
-            payment.status !== "verification_pending"
+            payment.status !== "verification_pending" &&
+            payment.status !== "verification_failed"
           ) ||
           !payment.subscriptionAddress
         ) {
           continue;
         }
 
-        // Retry readback for transactions confirmed by the wallet but
-        // not yet independently verified from Rialo.
-        if (payment.status === "verification_pending") {
+        // Retry readback for confirmed transactions, including records
+        // flagged by an earlier verifier version.
+        if (
+          payment.status === "verification_pending" ||
+          payment.status === "verification_failed"
+        ) {
           try {
             await verifyNativeSubscriptionRegistration({
               subscriberAddress: rule.payer,

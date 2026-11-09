@@ -123,6 +123,25 @@ function makeSubscription(
   };
 }
 
+function toRawRialoRpcRecord(subscription: Subscription) {
+  return {
+    kind: subscription.kind,
+    topic: subscription.topic,
+    subscriber: subscription.subscriber,
+    event_account: subscription.eventAccount,
+    timestamp_range: subscription.timestampRange?.map(String),
+    instructions: subscription.instructions.map((instruction) => ({
+      program_id: instruction.programId,
+      accounts: instruction.accounts.map((account) => ({
+        pubkey: account.pubkey,
+        is_signer: account.isSigner,
+        is_writable: account.isWritable,
+      })),
+      data: Array.from(instruction.data),
+    })),
+  };
+}
+
 function test(
   name: string,
   callback: () => void,
@@ -153,6 +172,27 @@ test("Correct subscription record is accepted", () => {
   assert.doesNotThrow(() => {
     assertSubscriptionRecordMatches(
       makeSubscription(),
+      expected,
+    );
+  });
+});
+
+test("Raw Rialo snake_case RPC subscription record is accepted", () => {
+  const rawRecord = toRawRialoRpcRecord(makeSubscription());
+
+  assert.equal(
+    rawRecord.event_account,
+    CLOCK_SYSVAR,
+  );
+
+  assert.deepEqual(
+    rawRecord.timestamp_range,
+    [START.toString(), END.toString()],
+  );
+
+  assert.doesNotThrow(() => {
+    assertSubscriptionRecordMatches(
+      rawRecord,
       expected,
     );
   });
@@ -325,5 +365,5 @@ test("Invalid date format is rejected", () => {
 });
 
 console.log("\n==========================================");
-console.log("RESULT: 19 verification tests passed.");
+console.log("RESULT: 20 verification tests passed.");
 console.log("==========================================\n");
