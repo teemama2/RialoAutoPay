@@ -43,48 +43,99 @@ function rpcErrorMessage(
   );
 }
 
-async function postRpc(
+
+const RPC_REQUEST_TIMEOUT_MS = 15_000;
+
+export async function postRpc(
   id: number,
   method: string,
   params: unknown[],
+  timeoutMs = RPC_REQUEST_TIMEOUT_MS,
 ): Promise<JsonRecord> {
-  const response = await fetch("/rialo-rpc", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id,
-      method,
-      params,
-    }),
-  });
+  const controller = new AbortController();
 
-  let payload: JsonRecord;
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  const timeoutError = () =>
+    new Error(
+      `Rialo RPC request timed out after ${Math.max(
+        1,
+        Math.ceil(timeoutMs / 1000),
+      )} seconds (${method}).`,
+    );
 
   try {
-    payload = asRecord(await response.json());
-  } catch {
-    throw new Error(
-      "The Rialo RPC response was not valid JSON.",
-    );
+    let response: Response;
+
+    try {
+      response = await fetch("/rialo-rpc", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          method,
+          params,
+        }),
+        signal: controller.signal,
+      });
+    } catch (cause) {
+      if (controller.signal.aborted) {
+        throw timeoutError();
+      }
+
+      const detail =
+        cause instanceof Error
+          ? cause.message
+          : "Unknown network error.";
+
+      throw new Error(
+        `Unable to reach Rialo RPC (${method}): ${detail}`,
+      );
+    }
+
+    let payload: JsonRecord;
+
+    try {
+      payload = asRecord(await response.json());
+    } catch {
+      if (controller.signal.aborted) {
+        throw timeoutError();
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          `Rialo RPC request failed with HTTP ${response.status}.`,
+        );
+      }
+
+      throw new Error(
+        "The Rialo RPC response was not valid JSON.",
+      );
+    }
+
+    const rpcError = rpcErrorMessage(payload);
+
+    if (rpcError) {
+      throw new Error(rpcError);
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `Rialo RPC request failed with HTTP ${response.status}.`,
+      );
+    }
+
+    return payload;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const rpcError = rpcErrorMessage(payload);
-
-  if (rpcError) {
-    throw new Error(rpcError);
-  }
-
-  if (!response.ok) {
-    throw new Error(
-      `Rialo RPC request failed with HTTP ${response.status}.`,
-    );
-  }
-
-  return payload;
 }
+
 
 function normalizeTimestampRange(
   value: unknown,

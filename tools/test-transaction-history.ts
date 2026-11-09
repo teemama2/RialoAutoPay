@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   fetchSubscriptionActivity,
+  postRpc,
 } from "../src/lib/subscriptionMonitor.ts";
 
 const SUBSCRIBER =
@@ -152,7 +153,69 @@ async function runTests() {
       "PASS: History remains available when active subscription is missing.",
     );
 
-    console.log("\nRESULT: 5 transaction-history tests passed.");
+        // Test 6: RPC timeout is reported clearly.
+    globalThis.fetch = ((
+      _input: RequestInfo | URL,
+      init?: RequestInit,
+    ) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+
+        const rejectAbort = () => {
+          reject(
+            new DOMException(
+              "The request was aborted.",
+              "AbortError",
+            ),
+          );
+        };
+
+        if (signal?.aborted) {
+          rejectAbort();
+          return;
+        }
+
+        signal?.addEventListener(
+          "abort",
+          rejectAbort,
+          { once: true },
+        );
+      })) as typeof fetch;
+
+    await assert.rejects(
+      () => postRpc(99, "getHealth", [], 10),
+      /Rialo RPC request timed out/,
+    );
+
+    console.log(
+      "PASS: RPC timeout is reported clearly.",
+    );
+
+    // Test 7: HTTP errors are reported with their status.
+    globalThis.fetch = (async () =>
+      ({
+        ok: false,
+        status: 503,
+        json: async () => ({
+          jsonrpc: "2.0",
+          id: 100,
+          result: null,
+        }),
+      }) as Response) as typeof fetch;
+
+    await assert.rejects(
+      () => postRpc(100, "getHealth", []),
+      /HTTP 503/,
+    );
+
+    console.log(
+      "PASS: HTTP errors include their response status.",
+    );
+
+        console.log(
+      "\nRESULT: 7 transaction-history and RPC resilience tests passed.",
+    );
+
   } finally {
     globalThis.fetch = originalFetch;
   }
