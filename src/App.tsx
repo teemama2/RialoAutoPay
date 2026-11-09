@@ -23,6 +23,13 @@ import {
   verifyTriggeredTransaction,
 } from "./lib/subscriptionMonitor";
 
+import {
+  getUtcPaymentTimestampRange,
+  parsePaymentAmountToKelvin,
+  SubscriptionVerificationError,
+  verifyNativeSubscriptionRegistration,
+} from "./lib/subscriptionVerification";
+
 import "./App.css";
 
 const STORAGE_PREFIX = "rialo-autopay:rules:v1:";
@@ -201,7 +208,10 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
         // Registered payments require a subscription address so we
         // can find their triggered transactions.
         const canCheckRegistered =
-          payment.status === "registered" &&
+          (
+            payment.status === "registered" ||
+            payment.status === "verification_pending"
+          ) &&
           Boolean(payment.subscriptionAddress);
 
         if (
@@ -273,12 +283,75 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
           continue;
         }
 
-        // Path B: look for a triggered transaction for a registered payment.
+        // Path B: verify registration, then inspect triggered transactions.
         if (
-          payment.status !== "registered" ||
+          (
+            payment.status !== "registered" &&
+            payment.status !== "verification_pending"
+          ) ||
           !payment.subscriptionAddress
         ) {
           continue;
+        }
+
+        // Retry readback for transactions confirmed by the wallet but
+        // not yet independently verified from Rialo.
+        if (payment.status === "verification_pending") {
+          try {
+            await verifyNativeSubscriptionRegistration({
+              subscriberAddress: rule.payer,
+              recipientAddress: rule.recipient,
+              nonce: payment.nonce,
+              subscriptionAddress: payment.subscriptionAddress,
+              amountKelvin: parsePaymentAmountToKelvin(rule.amountRlo),
+              timestampRange: getUtcPaymentTimestampRange(payment.date),
+            });
+
+            scheduledPayments[index] = {
+              ...payment,
+              status: "registered",
+              error: undefined,
+            };
+          } catch (cause) {
+            const retryable =
+              cause instanceof SubscriptionVerificationError &&
+              cause.retryable;
+
+            if (!retryable) {
+              scheduledPayments[index] = {
+                ...payment,
+                status: "verification_failed",
+                error:
+                  cause instanceof Error
+                    ? cause.message
+                    : "The stored subscription did not match the intended payment.",
+              };
+
+              stillUnverified += 1;
+
+              problems.push(
+                `Payment ${payment.paymentNumber} in rule ${rule.id} has a confirmed creation transaction, but its stored subscription could not be verified: ${
+                  cause instanceof Error
+                    ? cause.message
+                    : "Unknown verification error."
+                }`,
+              );
+
+              continue;
+            }
+
+            // Preserve the confirmed signature and address. Continue to
+            // check triggered history because a OneShot record may already
+            // have been removed after execution.
+            scheduledPayments[index] = {
+              ...payment,
+              status: "verification_pending",
+              error:
+                cause instanceof Error
+                  ? cause.message
+                  : "Subscription readback is temporarily unavailable.",
+            };
+          }
         }
 
         try {
@@ -372,7 +445,17 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
 
       const hasFailedPayment =
         scheduledPayments.some(
-          (payment) => payment.status === "failed",
+          (payment) =>
+            payment.status === "failed" ||
+            payment.status === "verification_failed",
+        );
+
+      const allRegistrationsVerified =
+        scheduledPayments.length > 0 &&
+        scheduledPayments.every(
+          (payment) =>
+            payment.status === "registered" ||
+            payment.status === "executed",
         );
 
       updatedRules.push({
@@ -381,7 +464,9 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
           ? "completed"
           : hasFailedPayment
             ? "failed"
-            : rule.status,
+            : allRegistrationsVerified
+              ? "active"
+              : rule.status,
         scheduledPayments,
       });
     }
@@ -684,8 +769,9 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
 
                   {registeredCount > 0 && (
                     <p className="notice">
-                      {registeredCount} payment(s) are registered but not
-                      yet verified as executed.
+                      {registeredCount} subscription creation transaction(s)
+                      have been confirmed. Registration verification and
+                      scheduled execution are tracked separately above.
                     </p>
                   )}
                 </article>

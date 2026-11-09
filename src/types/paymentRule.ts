@@ -26,6 +26,8 @@ export type PaymentRuleStatus =
 
 export type ScheduledPaymentRegistrationStatus =
   | "pending"
+  | "verification_pending"
+  | "verification_failed"
   | "registered"
   | "executed"
   | "failed"

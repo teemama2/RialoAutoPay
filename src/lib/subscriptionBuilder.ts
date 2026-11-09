@@ -130,6 +130,45 @@ function encodeNonce(nonceText: string): Uint8Array {
 }
 
 /**
+ * Builds the exact native Destroy instruction used by a OneShot
+ * subscription. Shared with verification to check its encoded nonce.
+ */
+export function buildNativeDestroyInstruction(
+  subscriberAddress: string,
+  subscriptionAddress: string,
+  nonceText: string,
+): Instruction {
+  const subscriber = PublicKey.fromString(subscriberAddress);
+  const subscription = PublicKey.fromString(subscriptionAddress);
+  const programId = PublicKey.fromString(SUBSCRIBER_PROGRAM_ID);
+  const nonce = encodeNonce(nonceText);
+
+  const data = serialize(subscriberInstructionSchema, {
+    variant: "Destroy",
+    value: {
+      nonce: Array.from(nonce),
+    },
+  });
+
+  return {
+    programId,
+    accounts: [
+      {
+        pubkey: subscriber,
+        isSigner: true,
+        isWritable: true,
+      },
+      {
+        pubkey: subscription,
+        isSigner: false,
+        isWritable: true,
+      },
+    ],
+    data,
+  };
+}
+
+/**
  * Enforces Rialo's native Subscription::sanitize_instructions
  * unique program/account key limit.
  *
@@ -283,32 +322,13 @@ export async function buildNativeSubscribeInstruction(
   // to a OneShot subscription so its account can be
   // cleaned up after execution.
   if (input.kind === "OneShot") {
-    const destroyData = serialize(
-      subscriberInstructionSchema,
-      {
-        variant: "Destroy",
-        value: {
-          nonce: Array.from(nonce),
-        },
-      },
+    instructionsToExecute.push(
+      buildNativeDestroyInstruction(
+        subscriber.toString(),
+        subscriptionAddress.toString(),
+        input.nonceText,
+      ),
     );
-
-    instructionsToExecute.push({
-      programId,
-      accounts: [
-        {
-          pubkey: subscriber,
-          isSigner: true,
-          isWritable: true,
-        },
-        {
-          pubkey: subscriptionAddress,
-          isSigner: false,
-          isWritable: true,
-        },
-      ],
-      data: destroyData,
-    });
   }
 
   // Validate the complete instruction list, including

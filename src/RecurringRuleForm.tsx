@@ -27,6 +27,10 @@ import type {
 import { rialoClient } from "./lib/rialoClient";
 import { planPaymentDates } from "./lib/paymentSchedule";
 import { buildNativeSubscribeInstruction } from "./lib/subscriptionBuilder";
+import {
+  SubscriptionVerificationError,
+  verifyNativeSubscriptionRegistration,
+} from "./lib/subscriptionVerification";
 
 interface Props {
   onRuleUpdated?: (rule: PaymentRuleRecord) => void;
@@ -388,25 +392,90 @@ export default function RecurringRuleForm({
             },
           });
 
+          // The transaction has executed, but do not call the
+          // subscription registered until its stored record is verified.
           registrations[index] = {
             ...registration,
-            status: "registered",
+            status: "verification_pending",
             subscriptionAddress: built.subscriptionAddress,
             creationSignature: result.signature,
+            error: "Creation transaction confirmed; verifying the stored subscription.",
           };
 
-          const completed = registrations.filter(
-            (item) => item.status === "registered",
+          const confirmedCount = registrations.filter(
+            (item) => Boolean(item.creationSignature),
           ).length;
 
-          setRegisteredCount(completed);
+          setRegisteredCount(confirmedCount);
+
+          // Persist the signature and PDA before attempting readback.
+          updateRecord({
+            ...record,
+            status: "partially_registered",
+            scheduledPayments: [...registrations],
+          });
+
+          try {
+            await verifyNativeSubscriptionRegistration({
+              subscriberAddress: currentPayer.toString(),
+              recipientAddress: currentDestination.toString(),
+              nonce: registration.nonce,
+              subscriptionAddress: built.subscriptionAddress,
+              amountKelvin: amountInKelvin,
+              timestampRange,
+            });
+
+            registrations[index] = {
+              ...registrations[index],
+              status: "registered",
+              error: undefined,
+            };
+          } catch (verificationCause) {
+            const retryable =
+              verificationCause instanceof SubscriptionVerificationError &&
+              verificationCause.retryable;
+
+            registrations[index] = {
+              ...registrations[index],
+              status: retryable
+                ? "verification_pending"
+                : "verification_failed",
+              error: errorMessage(verificationCause),
+            };
+
+            if (!retryable) {
+              for (
+                let remaining = index + 1;
+                remaining < registrations.length;
+                remaining += 1
+              ) {
+                registrations[remaining] = {
+                  ...registrations[remaining],
+                  status: "not_registered",
+                };
+              }
+
+              updateRecord({
+                ...record,
+                status: "partially_registered",
+                scheduledPayments: [...registrations],
+              });
+
+              setError(
+                `Payment ${payment.paymentNumber} has a confirmed creation transaction, but its on-chain subscription did not match the intended payment. Further registrations were stopped. ${errorMessage(verificationCause)}`,
+              );
+
+              return;
+            }
+          }
+
+          const allVerified = registrations.every(
+            (item) => item.status === "registered",
+          );
 
           updateRecord({
             ...record,
-            status:
-              completed === registrations.length
-                ? "active"
-                : "partially_registered",
+            status: allVerified ? "active" : "partially_registered",
             scheduledPayments: [...registrations],
           });
         } catch (cause) {
@@ -424,7 +493,7 @@ export default function RecurringRuleForm({
           }
 
           const completed = registrations.filter(
-            (item) => item.status === "registered",
+            (item) => Boolean(item.creationSignature),
           ).length;
 
           updateRecord({
@@ -435,22 +504,31 @@ export default function RecurringRuleForm({
 
           setError(
             `Registration stopped at payment ${payment.paymentNumber} of ${payments.length}. ` +
-              `${completed} subscription(s) were registered. ${errorMessage(cause)}`,
+              `${completed} subscription creation transaction(s) were already confirmed. ${errorMessage(cause)}`,
           );
 
           return;
         }
       }
 
+      const allVerified = registrations.every(
+        (item) => item.status === "registered",
+      );
+
+      const pendingVerificationCount = registrations.filter(
+        (item) => item.status === "verification_pending",
+      ).length;
+
       updateRecord({
         ...record,
-        status: "active",
+        status: allVerified ? "active" : "partially_registered",
         scheduledPayments: [...registrations],
       });
 
       setMessage(
-        `All ${registrations.length} one-shot subscription(s) were submitted and confirmed by the wallet flow. ` +
-          "The scheduled transfers have not necessarily executed yet. Check Subscription Activity to inspect triggered transactions.",
+        allVerified
+          ? `All ${registrations.length} one-shot subscriptions were submitted, confirmed, and independently verified from Rialo Devnet. The scheduled transfers have not necessarily executed yet.`
+          : `All ${registrations.length} subscription creation transactions were confirmed. ${pendingVerificationCount} subscription record(s) still need on-chain verification. Use Refresh Payment Statuses to retry. The scheduled transfers have not necessarily executed yet.`,
       );
     } finally {
       setIsRegistering(false);
