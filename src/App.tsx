@@ -655,65 +655,79 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
             </span>
           </div>
 
-          <h2>Wallet balance</h2>
 
-          {!connected ? (
-            <div className="balance-display">
-              <span className="balance-amount">—</span>
-            </div>
-          ) : (
-            <div className="balance-display">
-              <span className="balance-amount">
-                {isLoading
-                  ? "Loading..."
-                  : isError
-                    ? "Unavailable"
-                    : formatted !== undefined
-                      ? formatted
-                      : "Unavailable"}
-              </span>
+<h2>Wallet balance</h2>
 
-              {!isLoading && !isError && formatted !== undefined && (
-                <span className="balance-unit">RIA</span>
-              )}
-            </div>
-          )}
+{!connected ? (
+  <div className="balance-display">
+    <span className="balance-amount">—</span>
+  </div>
+) : !isDevnet ? (
+  <div className="balance-display">
+    <span className="balance-amount">Wrong network</span>
+  </div>
+) : (
+  <div className="balance-display">
+    <span className="balance-amount">
+      {isLoading
+        ? "Loading..."
+        : isError
+          ? "Unavailable"
+          : formatted !== undefined
+            ? formatted
+            : "Unavailable"}
+    </span>
 
-          <p className="balance-caption">
-            Native token balance reported by Rialo Devnet.
-          </p>
+    {!isLoading && !isError && formatted !== undefined && (
+      <span className="balance-unit">RIA</span>
+    )}
+  </div>
+)}
 
-          {connected && (
-            <div className="wallet-address-block">
-              <span className="eyebrow">CONNECTED ADDRESS</span>
-              <code>
-                {account?.address ?? "Address unavailable"}
-              </code>
-            </div>
-          )}
+<p className="balance-caption">
+  {!connected
+    ? "Connect a wallet to view its Rialo Devnet balance."
+    : !isDevnet
+      ? "Switch your wallet to Rialo Devnet to view the native token balance."
+      : "Native token balance reported by Rialo Devnet."}
+</p>
 
-          {isError && connected && (
-            <p className="notice" role="alert">
-              {error instanceof Error
-                ? error.message
-                : "An unknown balance error occurred."}
-            </p>
-          )}
+{connected && (
+  <div className="wallet-address-block">
+    <span className="eyebrow">CONNECTED ADDRESS</span>
+    <code>
+      {account?.address ?? "Address unavailable"}
+    </code>
+  </div>
+)}
 
-          {!isLoading && !isError && balance === undefined && connected && (
-            <p className="notice">
-              The balance query returned no balance value.
-            </p>
-          )}
+{isError && connected && isDevnet && (
+  <p className="notice" role="alert">
+    {error instanceof Error
+      ? error.message
+      : "An unknown balance error occurred."}
+  </p>
+)}
 
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => refetch()}
-            disabled={!connected || isFetching}
-          >
-            {isFetching ? "Refreshing..." : "Refresh wallet balance"}
-          </button>
+{!isLoading &&
+  !isError &&
+  balance === undefined &&
+  connected &&
+  isDevnet && (
+    <p className="notice">
+      The balance query returned no balance value.
+    </p>
+  )}
+
+<button
+  type="button"
+  className="secondary-button"
+  onClick={() => refetch()}
+  disabled={!connected || !isDevnet || isFetching}
+>
+  {isFetching ? "Refreshing..." : "Refresh wallet balance"}
+</button>
+
         </article>
 
         <section className="overview-metrics" aria-label="Payment statistics">
