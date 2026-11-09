@@ -15,6 +15,19 @@ const SYSTEM_PROGRAM =
 
 const U64_MAX = 18_446_744_073_709_551_615n;
 
+/**
+ * Rialo 0.18.1 defines this as:
+ * PACKET_DATA_SIZE / size_of::<Pubkey>()
+ *
+ * PACKET_DATA_SIZE = 4048
+ * Pubkey size = 32 bytes
+ * 4048 / 32 = 126
+ *
+ * Note: The Rust source comment says 38, but its actual
+ * constant expression evaluates to 126.
+ */
+export const MAX_STATIC_ACCOUNTS_PER_PACKET = 126;
+
 type NativePredicate = {
   topic: string;
   eventAccount?: string | null;
@@ -93,6 +106,14 @@ const subscriberInstructionSchema = Schema.enum([
   ],
 ]);
 
+/**
+ * Encodes an application nonce using Rialo's short-nonce
+ * convention: UTF-8 bytes followed by zero padding.
+ *
+ * This application deliberately restricts nonce strings
+ * to 1-32 UTF-8 bytes instead of implementing Blake3
+ * hashing for longer strings.
+ */
 function encodeNonce(nonceText: string): Uint8Array {
   const bytes = new TextEncoder().encode(nonceText);
 
@@ -106,6 +127,37 @@ function encodeNonce(nonceText: string): Uint8Array {
   nonce.set(bytes);
 
   return nonce;
+}
+
+/**
+ * Enforces Rialo's native Subscription::sanitize_instructions
+ * unique program/account key limit.
+ *
+ * Each instruction contributes:
+ * - Its program ID
+ * - Every account public key
+ *
+ * Duplicate keys are counted only once.
+ */
+function validateStaticAccountLimit(
+  instructions: Instruction[],
+): void {
+  const allPublicKeys = new Set<string>();
+
+  for (const instruction of instructions) {
+    allPublicKeys.add(instruction.programId.toString());
+
+    for (const account of instruction.accounts) {
+      allPublicKeys.add(account.pubkey.toString());
+    }
+  }
+
+  if (allPublicKeys.size > MAX_STATIC_ACCOUNTS_PER_PACKET) {
+    throw new Error(
+      `Subscription instructions reference ${allPublicKeys.size} unique program/account keys. ` +
+      `Rialo 0.18.1 permits at most ${MAX_STATIC_ACCOUNTS_PER_PACKET}.`,
+    );
+  }
 }
 
 export async function deriveSubscriptionAddress(
@@ -131,6 +183,7 @@ export async function deriveSubscriptionAddress(
 /**
  * Constructs a native Subscribe instruction.
  * Supports Persistent and OneShot subscriptions.
+ *
  * This function does not sign or submit a transaction.
  */
 export async function buildNativeSubscribeInstruction(
@@ -227,8 +280,8 @@ export async function buildNativeSubscribeInstruction(
   ];
 
   // Rialo's native helper appends a Destroy instruction
-  // to a OneShot subscription so that its account can
-  // be cleaned up after execution.
+  // to a OneShot subscription so its account can be
+  // cleaned up after execution.
   if (input.kind === "OneShot") {
     const destroyData = serialize(
       subscriberInstructionSchema,
@@ -257,6 +310,10 @@ export async function buildNativeSubscribeInstruction(
       data: destroyData,
     });
   }
+
+  // Validate the complete instruction list, including
+  // the automatic Destroy instruction for OneShot.
+  validateStaticAccountLimit(instructionsToExecute);
 
   const handler = {
     subscriber: subscriber.toBytes(),

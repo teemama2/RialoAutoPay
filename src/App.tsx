@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import type { PaymentRuleRecord } from "./types/paymentRule";
 
 import {
@@ -31,18 +31,60 @@ function getStorageKey(address: string): string {
   return `${STORAGE_PREFIX}${address.toLowerCase()}`;
 }
 
-function AutoPayDashboard() {
+function loadWalletRules(address: string | undefined): {
+  rules: PaymentRuleRecord[];
+  message: string;
+} {
+  if (!address) {
+    return { rules: [], message: "" };
+  }
+
+  try {
+    const raw = localStorage.getItem(getStorageKey(address));
+
+    if (!raw) {
+      return { rules: [], message: "" };
+    }
+
+    const parsed: unknown = JSON.parse(raw);
+
+    return {
+      rules: Array.isArray(parsed)
+        ? (parsed as PaymentRuleRecord[])
+        : [],
+      message: "",
+    };
+  } catch {
+    return {
+      rules: [],
+      message: "Saved rules could not be read from this browser.",
+    };
+  }
+}
+
+type AutoPayDashboardProps = {
+  walletAddress: string | undefined;
+};
+
+function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
   const connected = useIsConnected();
   const account = useActiveAccount();
   const chainId = useChainId();
 
+  // Each wallet gets a separate keyed dashboard instance. Load that
+  // wallet's browser records once when its dashboard is mounted.
+  const [initialWalletState] = useState(() =>
+    loadWalletRules(walletAddress),
+  );
+
   const [paymentRules, setPaymentRules] =
-    useState<PaymentRuleRecord[]>([]);
+    useState<PaymentRuleRecord[]>(initialWalletState.rules);
+  const paymentRulesRef = useRef<PaymentRuleRecord[]>(
+    initialWalletState.rules,
+  );
 
-  const [loadedWalletAddress, setLoadedWalletAddress] =
-    useState<string | null>(null);
-
-  const [storageMessage, setStorageMessage] = useState("");
+  const [storageMessage, setStorageMessage] =
+    useState(initialWalletState.message);
   const [isReconciling, setIsReconciling] = useState(false);
   const [reconcileMessage, setReconcileMessage] = useState("");
 
@@ -59,67 +101,38 @@ function AutoPayDashboard() {
   const wallets = useWallets();
   const walletsReady = useWalletsReady();
 
-  // Load saved rules for the connected wallet.
-  useEffect(() => {
+  // Update React state and persist the same wallet's records together.
+  // This runs from user actions or completed reconciliation, not an effect.
+  function commitPaymentRules(
+    update: (current: PaymentRuleRecord[]) => PaymentRuleRecord[],
+  ) {
+    const nextRules = update(paymentRulesRef.current);
+
+    paymentRulesRef.current = nextRules;
+    setPaymentRules(nextRules);
+
     const address = account?.address;
 
-    if (!address) {
-      setPaymentRules([]);
-      setLoadedWalletAddress(null);
-      return;
-    }
-
-    setLoadedWalletAddress(null);
-
-    let savedRules: PaymentRuleRecord[] = [];
-
-    try {
-      const raw = localStorage.getItem(getStorageKey(address));
-
-      if (raw) {
-        const parsed: unknown = JSON.parse(raw);
-
-        if (Array.isArray(parsed)) {
-          savedRules = parsed as PaymentRuleRecord[];
-        }
-      }
-
-      setStorageMessage("");
-    } catch {
-      setStorageMessage(
-        "Saved rules could not be read from this browser.",
-      );
-    }
-
-    setPaymentRules(savedRules);
-    setLoadedWalletAddress(address);
-  }, [account?.address]);
-
-  // Save rules whenever their registration or execution status changes.
-  useEffect(() => {
-    const address = account?.address;
-
-    // Do not save one wallet's rules under another wallet's key.
-    if (!address || loadedWalletAddress !== address) {
+    // Never write this dashboard's state under a different wallet key.
+    if (!address || address !== walletAddress) {
       return;
     }
 
     try {
       localStorage.setItem(
         getStorageKey(address),
-        JSON.stringify(paymentRules),
+        JSON.stringify(nextRules),
       );
-
       setStorageMessage("");
     } catch {
       setStorageMessage(
         "Browser storage failed. Rule updates may not survive a refresh.",
       );
     }
-  }, [account?.address, loadedWalletAddress, paymentRules]);
+  }
 
   function updateRule(record: PaymentRuleRecord) {
-    setPaymentRules((current) => {
+    commitPaymentRules((current) => {
       const exists = current.some(
         (item) => item.id === record.id,
       );
@@ -147,9 +160,9 @@ function AutoPayDashboard() {
       throw new Error("Switch your wallet to Rialo Devnet.");
     }
 
-    if (loadedWalletAddress !== account.address) {
+    if (walletAddress !== account.address) {
       throw new Error(
-        "Your wallet's saved rules are still loading. Try again.",
+        "The active wallet changed. Please retry the status refresh.",
       );
     }
 
@@ -373,15 +386,26 @@ function AutoPayDashboard() {
       });
     }
 
-    // Merge changes into the latest state so unrelated rules are retained.
-    setPaymentRules((current) => {
+    // Merge changes into the latest state so unrelated rules are retained,
+    // then persist the resulting records for this wallet.
+    commitPaymentRules((current) => {
       const updatesById = new Map(
         updatedRules.map((rule) => [rule.id, rule]),
       );
 
-      return current.map(
-        (rule) => updatesById.get(rule.id) ?? rule,
-      );
+      return current.map((rule) => {
+        const update = updatesById.get(rule.id);
+
+        if (!update) {
+          return rule;
+        }
+
+        return {
+          ...rule,
+          status: update.status,
+          scheduledPayments: update.scheduledPayments,
+        };
+      });
     });
 
     const summary =
@@ -676,8 +700,7 @@ function AutoPayDashboard() {
           disabled={
             !account ||
             chainId !== "rialo:devnet" ||
-            isReconciling ||
-            loadedWalletAddress !== account?.address
+            isReconciling
           }
           style={{ marginTop: "12px" }}
         >
@@ -712,10 +735,22 @@ function AutoPayDashboard() {
   );
 }
 
+function WalletScopedDashboard() {
+  const account = useActiveAccount();
+  const walletAddress = account?.address;
+
+  return (
+    <AutoPayDashboard
+      key={walletAddress ?? "disconnected"}
+      walletAddress={walletAddress}
+    />
+  );
+}
+
 export default function App() {
   return (
     <FrostProvider config={frostConfig}>
-      <AutoPayDashboard />
+      <WalletScopedDashboard />
     </FrostProvider>
   );
 }
