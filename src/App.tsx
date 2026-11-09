@@ -8,11 +8,8 @@ import {
   useActiveAccount,
   useChainId,
   useNativeBalance,
-  useWallets,
-  useWalletsReady,
 } from "@rialo/frost";
 
-import { getWallets } from "@wallet-standard/app";
 import PaymentRuleForm from "./PaymentRuleForm";
 import RecurringRuleForm from "./RecurringRuleForm";
 import SubscriptionActivityPanel from "./SubscriptionActivityPanel";
@@ -105,8 +102,6 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
     refetch,
   } = useNativeBalance();
 
-  const wallets = useWallets();
-  const walletsReady = useWalletsReady();
 
   // Update React state and persist the same wallet's records together.
   // This runs from user actions or completed reconciliation, not an effect.
@@ -523,120 +518,302 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
   }
 }
 
-  console.log("Frost wallets ready:", walletsReady);
 
-  console.log(
-    "Frost discovered wallets:",
-    wallets.map((wallet) => wallet.name),
+  const trackedPayments = paymentRules.flatMap(
+    (rule) => rule.scheduledPayments ?? [],
   );
 
-  console.log(
-    "Wallet Standard registry:",
-    getWallets().get().map((wallet) => ({
-      name: wallet.name,
-      chains: wallet.chains,
-      features: Object.keys(wallet.features),
-    })),
-  );
+  const verifiedRegistrations = trackedPayments.filter(
+    (payment) =>
+      payment.status === "registered" ||
+      payment.status === "executed",
+  ).length;
+
+  const verifiedSettlements = trackedPayments.filter(
+    (payment) => payment.status === "executed",
+  ).length;
+
+  const attentionCount = trackedPayments.filter(
+    (payment) =>
+      payment.status === "failed" ||
+      payment.status === "verification_failed" ||
+      payment.status === "verification_pending",
+  ).length;
+
+  const isDevnet = chainId === "rialo:devnet";
+
+  const metrics = [
+    {
+      label: "Payment rules",
+      value: paymentRules.length,
+      description: "Saved rules",
+    },
+    {
+      label: "Scheduled payments",
+      value: trackedPayments.length,
+      description: "Planned payment instances",
+    },
+    {
+      label: "Verified registrations",
+      value: verifiedRegistrations,
+      description: "On-chain records verified",
+    },
+    {
+      label: "Verified settlements",
+      value: verifiedSettlements,
+      description: "Transfers independently checked",
+    },
+    {
+      label: "Needs attention",
+      value: attentionCount,
+      description: "Failed or pending verification",
+    },
+  ];
+
+  function readableStatus(status: string) {
+    return status.replace(/_/g, " ");
+  }
 
   return (
     <main className="dashboard">
       <header className="topbar">
-        <div>
-          <h1>Rialo AutoPay</h1>
-          <p>Reactive payments on Rialo</p>
+        <div className="brand-lockup">
+          <div className="brand-mark" aria-hidden="true">
+            RA
+          </div>
+
+          <div className="brand-copy">
+            <p className="brand-eyebrow">RIALO AUTOPAY</p>
+            <h1>Rialo AutoPay</h1>
+            <p>Reactive payments and escrow enforcement</p>
+          </div>
         </div>
 
-        <ConnectButton />
+        <div className="topbar-actions">
+          <ConnectButton />
+        </div>
       </header>
 
+      <nav className="dashboard-nav" aria-label="Dashboard navigation">
+        <a href="#overview">Overview</a>
+        <a href="#payments">Payment operations</a>
+        <a href="#rules">Payment register</a>
+        <a href="#activity">Activity</a>
+      </nav>
+
       <section className="network-card">
-        <span className="status-dot" />
-        <div>
-          <strong>Rialo Devnet</strong>
-          <p>{chainId || "Checking network..."}</p>
+        <span
+          className={`status-dot ${
+            connected && isDevnet ? "is-connected" : "is-disconnected"
+          }`}
+        />
+
+        <div className="network-copy">
+          <span className="eyebrow">ACTIVE NETWORK</span>
+          <strong>
+            {isDevnet
+              ? "Rialo Devnet"
+              : chainId || "Network unavailable"}
+          </strong>
+          <p>
+            {connected
+              ? isDevnet
+                ? "Wallet connected to the target test network."
+                : "Your wallet is connected to a different network."
+              : "Connect a wallet to access payment operations."}
+          </p>
+        </div>
+
+        <span
+          className={`network-badge ${
+            connected && isDevnet ? "is-online" : "is-offline"
+          }`}
+        >
+          {connected
+            ? isDevnet
+              ? "DEVNET CONNECTED"
+              : "WRONG NETWORK"
+            : "WALLET DISCONNECTED"}
+        </span>
+      </section>
+
+      <section
+        id="overview"
+        className="overview-grid"
+        aria-label="Wallet and account overview"
+      >
+        <article className="account-card wallet-card">
+          <div className="card-topline">
+            <span className="eyebrow">ACCOUNT OVERVIEW</span>
+
+            <span
+              className={`status-pill ${
+                connected ? "status-active" : "status-pending"
+              }`}
+            >
+              {connected ? "Connected" : "Disconnected"}
+            </span>
+          </div>
+
+          <h2>Wallet balance</h2>
+
+          {!connected ? (
+            <div className="balance-display">
+              <span className="balance-amount">—</span>
+            </div>
+          ) : (
+            <div className="balance-display">
+              <span className="balance-amount">
+                {isLoading
+                  ? "Loading..."
+                  : isError
+                    ? "Unavailable"
+                    : formatted !== undefined
+                      ? formatted
+                      : "Unavailable"}
+              </span>
+
+              {!isLoading && !isError && formatted !== undefined && (
+                <span className="balance-unit">RIA</span>
+              )}
+            </div>
+          )}
+
+          <p className="balance-caption">
+            Native token balance reported by Rialo Devnet.
+          </p>
+
+          {connected && (
+            <div className="wallet-address-block">
+              <span className="eyebrow">CONNECTED ADDRESS</span>
+              <code>
+                {account?.address ?? "Address unavailable"}
+              </code>
+            </div>
+          )}
+
+          {isError && connected && (
+            <p className="notice" role="alert">
+              {error instanceof Error
+                ? error.message
+                : "An unknown balance error occurred."}
+            </p>
+          )}
+
+          {!isLoading && !isError && balance === undefined && connected && (
+            <p className="notice">
+              The balance query returned no balance value.
+            </p>
+          )}
+
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => refetch()}
+            disabled={!connected || isFetching}
+          >
+            {isFetching ? "Refreshing..." : "Refresh wallet balance"}
+          </button>
+        </article>
+
+        <section className="overview-metrics" aria-label="Payment statistics">
+          <div className="metrics-heading">
+            <div>
+              <span className="eyebrow">OPERATIONAL SUMMARY</span>
+              <h2>Payment activity</h2>
+            </div>
+            <span className="local-data-label">LOCAL RECORDS</span>
+          </div>
+
+          <div className="metrics-grid">
+            {metrics.map((metric) => (
+              <article className="metric-card" key={metric.label}>
+                <span className="metric-label">{metric.label}</span>
+                <strong className="metric-value">
+                  {metric.value.toLocaleString("en-US")}
+                </strong>
+                <span className="metric-description">
+                  {metric.description}
+                </span>
+              </article>
+            ))}
+          </div>
+        </section>
+      </section>
+
+      <p className="data-source-note">
+        The wallet balance is retrieved from Rialo Devnet. Payment statistics
+        are calculated from this browser's saved payment records; they are
+        not independent on-chain account totals.
+      </p>
+
+      <section
+        id="payments"
+        className="workspace-grid"
+        aria-label="Payment operations"
+      >
+        <div className="workspace-column">
+          <div className="workspace-label">
+            <span className="workspace-number">01</span>
+            <div>
+              <span className="eyebrow">DIRECT TRANSFER</span>
+              <h2>One-time payment</h2>
+            </div>
+          </div>
+
+          <PaymentRuleForm />
+        </div>
+
+        <div className="workspace-column">
+          <div className="workspace-label">
+            <span className="workspace-number">02</span>
+            <div>
+              <span className="eyebrow">REACTIVE AUTOMATION</span>
+              <h2>Recurring AutoPay</h2>
+            </div>
+          </div>
+
+          <RecurringRuleForm onRuleUpdated={updateRule} />
         </div>
       </section>
 
-      <section className="account-card">
-        <h2>Wallet Overview</h2>
+      <section
+        id="rules"
+        className="feature-card records-panel"
+        aria-labelledby="records-title"
+      >
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow">PAYMENT OPERATIONS</span>
+            <h2 id="records-title">Saved payment register</h2>
+            <p>
+              Inspect registered schedules, their subscription addresses
+              and verified execution references.
+            </p>
+          </div>
 
-        {!connected ? (
-          <p>
-            Connect your Rialo-compatible wallet to continue.
-          </p>
-        ) : (
-          <>
-            <p className="label">Connected address</p>
-            <code>
-              {account?.address ?? "Address unavailable"}
-            </code>
-
-            <p className="label">Native balance</p>
-
-            <h3>
-              {isLoading
-                ? "Loading balance..."
-                : isError
-                  ? "Balance request failed"
-                  : formatted !== undefined
-                    ? `${formatted} RIA`
-                    : "Balance unavailable"}
-            </h3>
-
-            {isError && (
-              <p className="notice">
-                {error instanceof Error
-                  ? error.message
-                  : "An unknown balance error occurred."}
-              </p>
-            )}
-
-            {!isLoading && !isError && balance === undefined && (
-              <p className="notice">
-                The balance query returned no balance value.
-              </p>
-            )}
-
-            <button
-              type="button"
-              onClick={() => refetch()}
-              disabled={isFetching}
-            >
-              {isFetching
-                ? "Refreshing..."
-                : "Refresh balance"}
-            </button>
-          </>
-        )}
-      </section>
-
-      <section className="feature-card">
-        <h2>One-Time Payment</h2>
-        <p>
-          Send an individual RLO payment from your connected
-          wallet on Rialo Devnet.
-        </p>
-        <PaymentRuleForm />
-      </section>
-
-      <section className="feature-card">
-        <h2>Recurring AutoPay Rules</h2>
-        <p>
-          Define a payment recipient, amount, frequency,
-          schedule, and payment limit.
-        </p>
-
-        <RecurringRuleForm onRuleUpdated={updateRule} />
-
-        <h3>Saved recurring rules</h3>
+          <button
+            type="button"
+            onClick={refreshPaymentStatuses}
+            disabled={!account || !isDevnet || isReconciling}
+          >
+            {isReconciling
+              ? "Verifying payments..."
+              : "Refresh payment statuses"}
+          </button>
+        </div>
 
         {paymentRules.length === 0 ? (
-          <p>
-            No recurring rules have been saved for this wallet yet.
-          </p>
+          <div className="empty-state">
+            <span className="empty-state-mark">—</span>
+            <h3>No saved payment rules</h3>
+            <p>
+              Create a payment schedule to begin tracking subscription
+              registrations and settlement records.
+            </p>
+          </div>
         ) : (
-          <div>
+          <div className="rule-list">
             {paymentRules.map((rule) => {
               const scheduledPayments =
                 rule.scheduledPayments ?? [];
@@ -650,155 +827,174 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
               ).length;
 
               return (
-                <article
-                  className="account-card"
-                  key={rule.id}
-                  style={{ marginTop: "12px" }}
-                >
-                  <h3>{rule.amountRlo} RLO per payment</h3>
+                <article className="rule-card" key={rule.id}>
+                  <div className="rule-card-header">
+                    <div>
+                      <span className="eyebrow">
+                        {rule.frequency.toUpperCase()} PAYMENT RULE
+                      </span>
 
-                  <p>
-                    <strong>Recipient:</strong>{" "}
-                    <code>{rule.recipient}</code>
-                  </p>
+                      <h3>
+                        {rule.amountRlo} RLO
+                        <span className="rule-unit"> per payment</span>
+                      </h3>
+                    </div>
 
-                  <p>
-                    <strong>Frequency:</strong> {rule.frequency}
-                  </p>
+                    <span
+                      className={`status-pill status-${rule.status}`}
+                    >
+                      {readableStatus(rule.status)}
+                    </span>
+                  </div>
 
-                  <p>
-                    <strong>Period:</strong>{" "}
-                    {rule.startDate} to {rule.endDate}
-                  </p>
+                  <div className="rule-metadata">
+                    <div className="rule-meta-item rule-recipient">
+                      <span className="eyebrow">RECIPIENT</span>
+                      <code>{rule.recipient}</code>
+                    </div>
 
-                  <p>
-                    <strong>Payment limit:</strong> {rule.maxPayments}
-                  </p>
+                    <div className="rule-meta-item">
+                      <span className="eyebrow">FREQUENCY</span>
+                      <strong>{readableStatus(rule.frequency)}</strong>
+                    </div>
 
-                  <p>
-                    <strong>Rule status:</strong> {rule.status}
-                  </p>
+                    <div className="rule-meta-item">
+                      <span className="eyebrow">SCHEDULE PERIOD (UTC)</span>
+                      <strong>
+                        {rule.startDate} – {rule.endDate}
+                      </strong>
+                    </div>
 
-                  {scheduledPayments.length > 0 && (
-                    <p>
-                      <strong>Verified executed:</strong>{" "}
-                      {executedCount} of {scheduledPayments.length}
-                    </p>
-                  )}
+                    <div className="rule-meta-item">
+                      <span className="eyebrow">PAYMENT LIMIT</span>
+                      <strong>
+                        {rule.maxPayments.toLocaleString("en-US")}
+                      </strong>
+                    </div>
+                  </div>
 
-                  <p className="notice">
+                  <div className="rule-progress">
+                    <div>
+                      <span className="eyebrow">VERIFIED EXECUTION</span>
+                      <strong>
+                        {executedCount} / {scheduledPayments.length}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span className="eyebrow">
+                        REGISTERED, NOT YET EXECUTED
+                      </span>
+                      <strong>{registeredCount}</strong>
+                    </div>
+
+                    <div>
+                      <span className="eyebrow">SCHEDULED INSTANCES</span>
+                      <strong>{scheduledPayments.length}</strong>
+                    </div>
+                  </div>
+
+                  <p className="rule-message">
                     {rule.status === "completed"
                       ? "Every scheduled payment in this rule has been verified as executed."
                       : rule.status === "partially_registered"
-                        ? "Some registrations did not complete. Review individual payment statuses below."
+                        ? "Some registrations did not complete. Review the individual payment records."
                         : rule.status === "failed"
-                          ? "The rule or a payment has a failure. Review the details below."
+                          ? "A rule or payment failure was recorded. Inspect the details below."
                           : rule.status === "active"
-                            ? "The rule has registered subscriptions. Execution status may still need verification."
-                            : "The rule is not marked as fully completed."}
+                            ? "The subscription registrations are verified. Scheduled transfers still require execution verification."
+                            : "This rule is not marked as fully completed."}
                   </p>
 
                   {scheduledPayments.length > 0 && (
-                    <div>
-                      <h4>Scheduled payment records</h4>
+                    <details className="schedule-details">
+                      <summary>
+                        Inspect scheduled payment records (
+                        {scheduledPayments.length})
+                      </summary>
 
-                      {scheduledPayments.map((payment) => (
-                        <div
-                          className="notice"
-                          key={payment.nonce}
-                          style={{ marginTop: "12px" }}
-                        >
-                          <p>
-                            <strong>
-                              Payment {payment.paymentNumber}
-                            </strong>
-                          </p>
+                      <div className="schedule-records">
+                        {scheduledPayments.map((payment) => (
+                          <article
+                            className="schedule-record"
+                            key={payment.nonce}
+                          >
+                            <div className="schedule-record-header">
+                              <div>
+                                <span className="eyebrow">
+                                  PAYMENT {payment.paymentNumber}
+                                </span>
+                                <strong>{payment.date} UTC</strong>
+                              </div>
 
-                          <p>
-                            <strong>Planned date (UTC):</strong>{" "}
-                            {payment.date}
-                          </p>
+                              <span
+                                className={`status-pill status-${payment.status}`}
+                              >
+                                {readableStatus(payment.status)}
+                              </span>
+                            </div>
 
-                          <p>
-                            <strong>Status:</strong> {payment.status}
-                          </p>
+                            <div className="schedule-record-data">
+                              <div>
+                                <span className="eyebrow">NONCE</span>
+                                <code>{payment.nonce}</code>
+                              </div>
 
-                          <p><strong>Nonce:</strong></p>
-                          <code>{payment.nonce}</code>
+                              {payment.subscriptionAddress && (
+                                <div>
+                                  <span className="eyebrow">
+                                    SUBSCRIPTION ADDRESS
+                                  </span>
+                                  <code>{payment.subscriptionAddress}</code>
+                                </div>
+                              )}
 
-                          {payment.subscriptionAddress && (
-                            <>
-                              <p>
-                                <strong>Subscription address:</strong>
-                              </p>
-                              <code>
-                                {payment.subscriptionAddress}
-                              </code>
-                            </>
-                          )}
+                              {payment.creationSignature && (
+                                <div>
+                                  <span className="eyebrow">
+                                    CREATION SIGNATURE
+                                  </span>
+                                  <code>{payment.creationSignature}</code>
+                                </div>
+                              )}
 
-                          {payment.creationSignature && (
-                            <>
-                              <p>
-                                <strong>Registration signature:</strong>
-                              </p>
-                              <code>{payment.creationSignature}</code>
-                            </>
-                          )}
+                              {payment.triggeredSignature && (
+                                <div>
+                                  <span className="eyebrow">
+                                    TRIGGERED TRANSACTION
+                                  </span>
+                                  <code>{payment.triggeredSignature}</code>
+                                </div>
+                              )}
 
-                          {payment.triggeredSignature && (
-                            <>
-                              <p>
-                                <strong>Verified triggered signature:</strong>
-                              </p>
-                              <code>{payment.triggeredSignature}</code>
-                            </>
-                          )}
+                              {payment.triggeredBlockNumber && (
+                                <div>
+                                  <span className="eyebrow">
+                                    EXECUTION BLOCK
+                                  </span>
+                                  <strong>
+                                    {payment.triggeredBlockNumber}
+                                  </strong>
+                                </div>
+                              )}
 
-                          {payment.triggeredBlockNumber && (
-                            <p>
-                              <strong>Execution block:</strong>{" "}
-                              {payment.triggeredBlockNumber}
-                            </p>
-                          )}
-
-                          {payment.error && (
-                            <p role="alert">
-                              <strong>Details:</strong> {payment.error}
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {registeredCount > 0 && (
-                    <p className="notice">
-                      {registeredCount} subscription creation transaction(s)
-                      have been confirmed. Registration verification and
-                      scheduled execution are tracked separately above.
-                    </p>
+                              {payment.error && (
+                                <div className="record-error">
+                                  <span className="eyebrow">DETAILS</span>
+                                  <p role="alert">{payment.error}</p>
+                                </div>
+                              )}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </details>
                   )}
                 </article>
               );
             })}
           </div>
         )}
-
-        <button
-          type="button"
-          onClick={refreshPaymentStatuses}
-          disabled={
-            !account ||
-            chainId !== "rialo:devnet" ||
-            isReconciling
-          }
-          style={{ marginTop: "12px" }}
-        >
-          {isReconciling
-            ? "Verifying payments..."
-            : "Refresh payment statuses"}
-        </button>
 
         {reconcileMessage && (
           <p className="notice" role="status">
@@ -812,18 +1008,43 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
           </p>
         )}
 
-        <p className="notice">
-          Rules are saved in this browser separately for each wallet.
+        <p className="data-source-note">
+          Rules are stored in this browser separately for each wallet.
           Browser storage is not an on-chain record and does not replace
           verifying a transaction on Rialo.
         </p>
       </section>
 
-      <SubscriptionActivityPanel
-        subscriberAddress={account?.address ?? ""}
-      />
+      <section
+        id="activity"
+        className="activity-section"
+        aria-labelledby="activity-heading"
+      >
+        <div className="section-heading activity-heading">
+          <div>
+            <span className="eyebrow">NETWORK INSPECTION</span>
+            <h2 id="activity-heading">
+              Subscription and transaction activity
+            </h2>
+            <p>
+              Inspect native subscription records, triggered transactions
+              and sender/recipient account histories.
+            </p>
+          </div>
+        </div>
+
+        <SubscriptionActivityPanel
+          subscriberAddress={account?.address ?? ""}
+        />
+      </section>
+
+      <footer className="dashboard-footer">
+        <span>RIALO AUTOPAY</span>
+        <span>Rialo Devnet · Reactive payment operations</span>
+      </footer>
     </main>
   );
+
 }
 
 function WalletScopedDashboard() {

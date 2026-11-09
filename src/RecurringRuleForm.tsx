@@ -1,8 +1,5 @@
 import { useMemo, useState } from "react";
-import type {
-  FormEvent,
-  CSSProperties,
-} from "react";
+import type { FormEvent } from "react";
 
 import {
   PublicKey,
@@ -42,33 +39,6 @@ const CLOCK_SYSVAR =
 
 const U64_MAX = 18_446_744_073_709_551_615n;
 const DAY_MS = 86_400_000;
-
-const fieldStyle: CSSProperties = {
-  width: "100%",
-  boxSizing: "border-box",
-  padding: "12px",
-  marginTop: "6px",
-  borderRadius: "10px",
-  border: "1px solid #35435c",
-  background: "#0b1020",
-  color: "#e9edf5",
-  font: "inherit",
-};
-
-const labelStyle: CSSProperties = {
-  display: "block",
-  marginTop: "16px",
-  color: "#cbd5e1",
-  fontWeight: 600,
-};
-
-const previewStyle: CSSProperties = {
-  marginTop: "20px",
-  padding: "16px",
-  border: "1px solid #27334c",
-  borderRadius: "12px",
-  overflowWrap: "anywhere",
-};
 
 function parseRloToKelvin(value: string): bigint {
   const normalized = value.trim();
@@ -552,12 +522,12 @@ export default function RecurringRuleForm({
       </p>
 
       <form onSubmit={handleSubmit}>
-        <label style={labelStyle} htmlFor="auto-recipient">
+        <label className="form-label" htmlFor="auto-recipient">
           Recipient address
         </label>
         <input
           id="auto-recipient"
-          style={fieldStyle}
+          className="form-control"
           value={recipient}
           onChange={(event) => {
             setRecipient(event.target.value);
@@ -569,12 +539,12 @@ export default function RecurringRuleForm({
           disabled={busy}
         />
 
-        <label style={labelStyle} htmlFor="auto-amount">
+        <label className="form-label" htmlFor="auto-amount">
           Amount per payment (RLO)
         </label>
         <input
           id="auto-amount"
-          style={fieldStyle}
+          className="form-control"
           value={amount}
           onChange={(event) => {
             setAmount(event.target.value);
@@ -586,12 +556,12 @@ export default function RecurringRuleForm({
           disabled={busy}
         />
 
-        <label style={labelStyle} htmlFor="auto-frequency">
+        <label className="form-label" htmlFor="auto-frequency">
           Frequency
         </label>
         <select
           id="auto-frequency"
-          style={fieldStyle}
+          className="form-control"
           value={frequency}
           onChange={(event) =>
             setFrequency(event.target.value as PaymentFrequency)
@@ -603,12 +573,12 @@ export default function RecurringRuleForm({
           <option value="monthly">Monthly</option>
         </select>
 
-        <label style={labelStyle} htmlFor="auto-start">
+        <label className="form-label" htmlFor="auto-start">
           Start date (UTC)
         </label>
         <input
           id="auto-start"
-          style={fieldStyle}
+          className="form-control"
           type="date"
           value={startDate}
           onChange={(event) => {
@@ -619,12 +589,12 @@ export default function RecurringRuleForm({
           disabled={busy}
         />
 
-        <label style={labelStyle} htmlFor="auto-end">
+        <label className="form-label" htmlFor="auto-end">
           End date (UTC)
         </label>
         <input
           id="auto-end"
-          style={fieldStyle}
+          className="form-control"
           type="date"
           value={endDate}
           min={startDate || undefined}
@@ -636,12 +606,12 @@ export default function RecurringRuleForm({
           disabled={busy}
         />
 
-        <label style={labelStyle} htmlFor="auto-limit">
+        <label className="form-label" htmlFor="auto-limit">
           Maximum number of payments
         </label>
         <input
           id="auto-limit"
-          style={fieldStyle}
+          className="form-control"
           type="number"
           min="1"
           max="10000"
@@ -656,11 +626,11 @@ export default function RecurringRuleForm({
         />
 
         <section
-          style={previewStyle}
+          className="schedule-preview"
           aria-live="polite"
           aria-label="Payment schedule preview"
         >
-          <h3 style={{ marginTop: 0 }}>Payment schedule preview</h3>
+          <h3 className="schedule-preview-title">Payment schedule preview</h3>
 
           {!startDate || !endDate ? (
             <p>Choose a start date and end date to preview payments.</p>
@@ -680,37 +650,21 @@ export default function RecurringRuleForm({
                 {frequency.charAt(0).toUpperCase() + frequency.slice(1)}
               </p>
 
-              <div style={{ overflowX: "auto" }}>
-                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    textAlign: "left",
-                  }}
-                >
+              <div className="schedule-table-wrap">
+                <table className="schedule-table">
                   <thead>
                     <tr>
-                      <th style={{ padding: "8px 4px" }}>Payment</th>
-                      <th style={{ padding: "8px 4px" }}>Planned date (UTC)</th>
+                      <th>Payment</th>
+                      <th>Planned date (UTC)</th>
                     </tr>
                   </thead>
                   <tbody>
                     {visiblePayments.map((payment) => (
                       <tr key={payment.paymentNumber}>
-                        <td
-                          style={{
-                            padding: "8px 4px",
-                            borderTop: "1px solid #27334c",
-                          }}
-                        >
+                        <td>
                           {payment.paymentNumber}
                         </td>
-                        <td
-                          style={{
-                            padding: "8px 4px",
-                            borderTop: "1px solid #27334c",
-                          }}
-                        >
+                        <td>
                           {formatDate(payment.date)}
                         </td>
                       </tr>
@@ -747,7 +701,7 @@ export default function RecurringRuleForm({
         <button
           type="submit"
           disabled={!account || chainId !== "rialo:devnet" || busy}
-          style={{ marginTop: "20px" }}
+          className="register-schedule-button"
         >
           {busy
             ? `Registering subscriptions (${registeredCount}/${schedulePreview.payments.length})...`
