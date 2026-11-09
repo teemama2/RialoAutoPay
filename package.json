@@ -9,7 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test:subscriptions": "tsx tools/test-subscription-builder.ts && tsx tools/test-subscription-verification.ts && node tools/test-subscription-serialization.mjs",
-    "test:transactions": "tsx tools/test-triggered-transaction.ts"
+    "test:transactions": "tsx tools/test-triggered-transaction.ts && tsx tools/test-transaction-history.ts"
   },
   "dependencies": {
     "@rialo/frost": "^0.18.1",

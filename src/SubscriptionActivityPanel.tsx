@@ -1,4 +1,6 @@
+
 import { useState } from "react";
+
 import {
   PublicKey,
   TransactionBuilder,
@@ -13,6 +15,7 @@ import {
   fetchSubscriptionActivity,
   verifyTriggeredTransaction,
 } from "./lib/subscriptionMonitor";
+
 import { buildNativeUnsubscribeInstruction } from "./lib/subscriptionBuilder";
 import { rialoClient } from "./lib/rialoClient";
 
@@ -36,9 +39,54 @@ function displayError(value: unknown): string {
   }
 
   try {
-    return JSON.stringify(value);
+    return JSON.stringify(value) ?? String(value);
   } catch {
     return String(value);
+  }
+}
+
+/**
+ * Converts a Unix timestamp in seconds into a readable UTC date.
+ * Does not invent a timestamp when the RPC does not supply one.
+ */
+function formatBlockTime(value: bigint | null): string {
+  if (value === null) {
+    return "Not supplied by Rialo RPC";
+  }
+
+  const timestamp = Number(value);
+
+  if (!Number.isSafeInteger(timestamp) || timestamp < 0) {
+    return `Unix timestamp: ${value.toString()}`;
+  }
+
+  const date = new Date(timestamp * 1000);
+
+  if (Number.isNaN(date.getTime())) {
+    return `Unix timestamp: ${value.toString()}`;
+  }
+
+  return (
+    new Intl.DateTimeFormat("en-GB", {
+      dateStyle: "medium",
+      timeStyle: "medium",
+      timeZone: "UTC",
+    }).format(date) + " UTC"
+  );
+}
+
+function executionStatusLabel(
+  status: "success" | "failed" | "unknown",
+): string {
+  switch (status) {
+    case "success":
+      return "Successful execution — no error reported";
+
+    case "failed":
+      return "Execution failed";
+
+    default:
+      return "Execution result unavailable";
   }
 }
 
@@ -55,9 +103,12 @@ export default function SubscriptionActivityPanel({
   const [nonce, setNonce] = useState("");
   const [recipientAddress, setRecipientAddress] = useState("");
   const [expectedAmountRlo, setExpectedAmountRlo] = useState("");
+
   const [activity, setActivity] = useState<Activity | null>(null);
+
   const [triggerVerification, setTriggerVerification] =
     useState<Record<string, TriggerVerification>>({});
+
   const [verificationMessage, setVerificationMessage] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -107,7 +158,9 @@ export default function SubscriptionActivityPanel({
       }
 
       const effectiveRecipient =
-        recipientAddress.trim() || result.recipientAddress || "";
+        recipientAddress.trim() ||
+        result.recipientAddress ||
+        "";
 
       if (!effectiveRecipient || !expectedAmountRlo.trim()) {
         setVerificationMessage(
@@ -116,8 +169,7 @@ export default function SubscriptionActivityPanel({
         return;
       }
 
-      // Limit detailed transaction checks to the ten most recent entries
-      // to avoid sending excessive RPC requests from one refresh.
+      // Verify the ten most recent transactions to limit RPC requests.
       const transactionsToVerify =
         result.triggeredTransactions.slice(0, 10);
 
@@ -279,68 +331,76 @@ export default function SubscriptionActivityPanel({
 
   return (
     <section className="feature-card">
-      <h2>Subscription Activity</h2>
+      <div className="activity-panel-heading">
+        <span className="eyebrow">SUBSCRIPTION INSPECTION</span>
+        <h2>Subscription Activity</h2>
+        <p>
+          Inspect native subscription records, triggered transactions
+          and associated account histories on Rialo Devnet.
+        </p>
+      </div>
 
-      <p>
-        Inspect a subscription, its triggered transactions, and
-        account transaction histories on Rialo Devnet.
-      </p>
+      <div className="activity-search">
+        <label className="label" htmlFor="subscription-nonce">
+          Subscription nonce
+        </label>
 
-      <label className="label" htmlFor="subscription-nonce">
-        Subscription nonce
-      </label>
+        <input
+          id="subscription-nonce"
+          type="text"
+          value={nonce}
+          onChange={(event) => setNonce(event.target.value)}
+          placeholder="Enter the exact subscription nonce"
+          disabled={busy}
+        />
 
-      <input
-        id="subscription-nonce"
-        type="text"
-        value={nonce}
-        onChange={(event) => setNonce(event.target.value)}
-        placeholder="Enter the exact subscription nonce"
-        disabled={busy}
-      />
+        <label className="label" htmlFor="history-recipient">
+          Recipient address (optional if subscription is active)
+        </label>
 
-      <label className="label" htmlFor="history-recipient">
-        Recipient address (optional if the subscription is still active)
-      </label>
+        <input
+          id="history-recipient"
+          type="text"
+          value={recipientAddress}
+          onChange={(event) => setRecipientAddress(event.target.value)}
+          placeholder="Enter the payment recipient address"
+          disabled={busy}
+        />
 
-      <input
-        id="history-recipient"
-        type="text"
-        value={recipientAddress}
-        onChange={(event) => setRecipientAddress(event.target.value)}
-        placeholder="Enter the payment recipient address"
-        disabled={busy}
-      />
+        <label className="label" htmlFor="history-amount">
+          Expected payment amount (RLO)
+        </label>
 
-      <label className="label" htmlFor="history-amount">
-        Expected payment amount (RLO)
-      </label>
+        <input
+          id="history-amount"
+          type="text"
+          inputMode="decimal"
+          value={expectedAmountRlo}
+          onChange={(event) => setExpectedAmountRlo(event.target.value)}
+          placeholder="e.g. 0.001"
+          disabled={busy}
+        />
 
-      <input
-        id="history-amount"
-        type="text"
-        inputMode="decimal"
-        value={expectedAmountRlo}
-        onChange={(event) => setExpectedAmountRlo(event.target.value)}
-        placeholder="e.g. 0.001"
-        disabled={busy}
-      />
+        <p className="notice">
+          Settlement verification checks the transaction instruction
+          against the expected payer, recipient and payment amount.
+        </p>
 
-      <p className="notice">
-        Enter the expected amount to verify the actual transfer instruction
-        against the payer, recipient, and amount.
-      </p>
-
-      <button
-        type="button"
-        onClick={checkActivity}
-        disabled={busy || !subscriberAddress}
-      >
-        {loading ? "Checking Rialo..." : "Check subscription and histories"}
-      </button>
+        <button
+          type="button"
+          onClick={checkActivity}
+          disabled={busy || !subscriberAddress}
+        >
+          {loading
+            ? "Checking Rialo..."
+            : "Check subscription and histories"}
+        </button>
+      </div>
 
       {!subscriberAddress && (
-        <p className="notice">Connect your wallet to continue.</p>
+        <p className="notice">
+          Connect your wallet to continue.
+        </p>
       )}
 
       {error && (
@@ -365,179 +425,234 @@ export default function SubscriptionActivityPanel({
       )}
 
       {activity && (
-        <div>
-          <h3>Subscription lookup</h3>
+        <div className="activity-results">
+          <section className="activity-result-section">
+            <span className="eyebrow">REGISTRATION LOOKUP</span>
+            <h3>Subscription lookup</h3>
 
-          <p className="label">Subscription address</p>
-          <code>{activity.subscriptionAddress}</code>
+            <p className="label">Derived subscription address</p>
+            <code>{activity.subscriptionAddress}</code>
 
-          {activity.subscriptionLookupError && (
-            <div className="notice">
-              <strong>Active subscription record unavailable</strong>
-              <p>{activity.subscriptionLookupError}</p>
-              <p>
-                Account histories are queried separately below.
-                A missing subscription record does not prove the payment
-                executed.
-              </p>
-            </div>
-          )}
-
-          {activity.subscription && (
-            <>
-              {!hasTimestampRange && (
-                <p className="notice" role="alert">
-                  No timestamp range was returned in the subscription record.
+            {activity.subscriptionLookupError && (
+              <div className="notice">
+                <strong>Active subscription record unavailable</strong>
+                <p>{activity.subscriptionLookupError}</p>
+                <p>
+                  Account histories are queried separately.
+                  A missing subscription record does not prove
+                  that the payment executed.
                 </p>
-              )}
+              </div>
+            )}
 
-              <h3>Subscription record</h3>
-
-              <pre
-                style={{
-                  whiteSpace: "pre-wrap",
-                  overflowWrap: "anywhere",
-                }}
-              >
-                {JSON.stringify(
-                  activity.subscription,
-                  (_key, value) =>
-                    typeof value === "bigint"
-                      ? value.toString()
-                      : value,
-                  2,
+            {activity.subscription && (
+              <>
+                {!hasTimestampRange && (
+                  <p className="notice" role="alert">
+                    No timestamp range was returned in the subscription record.
+                  </p>
                 )}
-              </pre>
 
-              <button
-                type="button"
-                onClick={cancelSubscription}
-                disabled={busy}
-              >
-                {busy
-                  ? "Processing..."
-                  : "Unsubscribe this registration"}
-              </button>
-            </>
-          )}
+                <h3>Stored subscription record</h3>
 
-          <h3>Subscription-triggered transactions</h3>
-          <p>
-            <strong>Returned:</strong> {activity.transactionCount}
-          </p>
+                <pre className="subscription-json">
+                  {JSON.stringify(
+                    activity.subscription,
+                    (_key, value) =>
+                      typeof value === "bigint"
+                        ? value.toString()
+                        : value,
+                    2,
+                  )}
+                </pre>
 
-          {activity.triggeredTransactionsError && (
-            <p className="notice" role="alert">
-              {activity.triggeredTransactionsError}
-            </p>
-          )}
+                <button
+                  type="button"
+                  className="danger-button"
+                  onClick={cancelSubscription}
+                  disabled={busy}
+                >
+                  {busy
+                    ? "Processing..."
+                    : "Unsubscribe this registration"}
+                </button>
+              </>
+            )}
+          </section>
 
-          {verificationMessage && (
-            <p className="notice" role="status">
-              {verificationMessage}
-            </p>
-          )}
+          <section className="activity-result-section">
+            <span className="eyebrow">AUTOMATION EXECUTION</span>
+            <h3>Subscription-triggered transactions</h3>
 
-          {activity.triggeredTransactions.length === 0 ? (
             <p>
-              No triggered transactions were returned by this query.
+              <strong>Returned transactions:</strong>{" "}
+              {activity.transactionCount}
             </p>
-          ) : (
-            <ul>
-              {activity.triggeredTransactions.map((tx, index) => {
-                const verification =
-                  triggerVerification[tx.signature];
 
-                return (
-                  <li key={`${tx.signature}-${index}`}>
-                    <p className="label">Triggered transaction signature</p>
+            {activity.triggeredTransactionsError && (
+              <p className="notice" role="alert">
+                {activity.triggeredTransactionsError}
+              </p>
+            )}
+
+            {verificationMessage && (
+              <p className="notice" role="status">
+                {verificationMessage}
+              </p>
+            )}
+
+            {activity.triggeredTransactions.length === 0 ? (
+              <p>
+                No triggered transactions were returned by this query.
+              </p>
+            ) : (
+              <ul>
+                {activity.triggeredTransactions.map((tx, index) => {
+                  const verification =
+                    triggerVerification[tx.signature];
+
+                  return (
+                    <li key={`${tx.signature}-${index}`}>
+                      <p className="label">
+                        Triggered transaction signature
+                      </p>
+
+                      <code>{tx.signature}</code>
+
+                      <p>
+                        <strong>Block:</strong>{" "}
+                        {tx.blockNumber.toString()}
+                      </p>
+
+                      <p>
+                        <strong>Settlement verification:</strong>{" "}
+                        {verification
+                          ? verification.status === "success"
+                            ? "Verified successfully"
+                            : verification.status === "failed"
+                              ? "Verification failed"
+                              : "Could not verify"
+                          : "Not checked"}
+                      </p>
+
+                      {verification?.error && (
+                        <p className="notice" role="alert">
+                          {verification.error}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
+          <section className="activity-result-section">
+            <span className="eyebrow">PAYER ACCOUNT</span>
+            <h3>Sender transaction history</h3>
+
+            <p className="label">Address</p>
+            <code>{subscriberAddress}</code>
+
+            {activity.senderHistoryError && (
+              <p className="notice" role="alert">
+                {activity.senderHistoryError}
+              </p>
+            )}
+
+            {activity.senderAddressHistory.length === 0 ? (
+              <p>No sender transaction signatures were returned.</p>
+            ) : (
+              <ul>
+                {activity.senderAddressHistory.slice(0, 20).map((tx) => (
+                  <li key={tx.signature}>
+                    <p className="label">Transaction signature</p>
                     <code>{tx.signature}</code>
 
                     <p>
-                      <strong>Block:</strong>{" "}
-                      {tx.blockNumber.toString()}
+                      <strong>Block height:</strong>{" "}
+                      {tx.blockHeight.toString()}
                     </p>
 
                     <p>
-                      <strong>Settlement verification:</strong>{" "}
-                      {verification
-                        ? verification.status === "success"
-                          ? "Verified successfully"
-                          : verification.status === "failed"
-                            ? "Verification failed"
-                            : "Could not verify"
-                        : "Not checked"}
+                      <strong>Block time:</strong>{" "}
+                      {formatBlockTime(tx.blockTime)}
                     </p>
 
-                    {verification?.error && (
+                    <p>
+                      <strong>RPC execution result:</strong>{" "}
+                      {executionStatusLabel(tx.executionStatus)}
+                    </p>
+
+                    {tx.executionStatus === "failed" && (
                       <p className="notice" role="alert">
-                        {verification.error}
+                        {displayError(tx.err)}
                       </p>
                     )}
                   </li>
-                );
-              })}
-            </ul>
-          )}
+                ))}
+              </ul>
+            )}
+          </section>
 
-          <h3>Sender transaction history</h3>
-          <p className="label">Address</p>
-          <code>{subscriberAddress}</code>
+          <section className="activity-result-section">
+            <span className="eyebrow">RECIPIENT ACCOUNT</span>
+            <h3>Recipient transaction history</h3>
 
-          {activity.senderHistoryError && (
-            <p className="notice" role="alert">
-              {activity.senderHistoryError}
-            </p>
-          )}
+            {activity.recipientAddress && (
+              <>
+                <p className="label">Address</p>
+                <code>{activity.recipientAddress}</code>
+              </>
+            )}
 
-          {activity.senderAddressHistory.length === 0 ? (
-            <p>No sender transaction signatures were returned.</p>
-          ) : (
-            <ul>
-              {activity.senderAddressHistory.slice(0, 20).map((tx) => (
-                <li key={tx.signature}>
-                  <p className="label">Signature</p>
-                  <code>{tx.signature}</code>
-                  <p>Block height: {tx.blockHeight.toString()}</p>
-                  <p>Block time value: {tx.blockTime.toString()}</p>
-                  <p>Execution error: {displayError(tx.err)}</p>
-                </li>
-              ))}
-            </ul>
-          )}
+            {activity.recipientHistoryError && (
+              <p className="notice" role="alert">
+                {activity.recipientHistoryError}
+              </p>
+            )}
 
-          <h3>Recipient transaction history</h3>
+            {activity.recipientAddressHistory.length === 0 ? (
+              <p>No recipient transaction signatures were returned.</p>
+            ) : (
+              <ul>
+                {activity.recipientAddressHistory.slice(0, 20).map((tx) => (
+                  <li key={tx.signature}>
+                    <p className="label">Transaction signature</p>
+                    <code>{tx.signature}</code>
 
-          {activity.recipientAddress && (
-            <code>{activity.recipientAddress}</code>
-          )}
+                    <p>
+                      <strong>Block height:</strong>{" "}
+                      {tx.blockHeight.toString()}
+                    </p>
 
-          {activity.recipientHistoryError && (
-            <p className="notice" role="alert">
-              {activity.recipientHistoryError}
-            </p>
-          )}
+                    <p>
+                      <strong>Block time:</strong>{" "}
+                      {formatBlockTime(tx.blockTime)}
+                    </p>
 
-          {activity.recipientAddressHistory.length === 0 ? (
-            <p>No recipient transaction signatures were returned.</p>
-          ) : (
-            <ul>
-              {activity.recipientAddressHistory.slice(0, 20).map((tx) => (
-                <li key={tx.signature}>
-                  <p className="label">Signature</p>
-                  <code>{tx.signature}</code>
-                  <p>Block height: {tx.blockHeight.toString()}</p>
-                  <p>Block time value: {tx.blockTime.toString()}</p>
-                  <p>Execution error: {displayError(tx.err)}</p>
-                </li>
-              ))}
-            </ul>
-          )}
+                    <p>
+                      <strong>RPC execution result:</strong>{" "}
+                      {executionStatusLabel(tx.executionStatus)}
+                    </p>
+
+                    {tx.executionStatus === "failed" && (
+                      <p className="notice" role="alert">
+                        {displayError(tx.err)}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
           <p className="notice">
-            These lists show transactions associated with the accounts.
-            To confirm the scheduled payment, we must identify the relevant
-            signature and inspect that transaction's instructions and result.
+            Sender and recipient histories show transactions associated
+            with those accounts. They do not independently prove that a
+            scheduled payment settled. Settlement requires verification
+            of the specific triggered transaction's execution result,
+            payer, recipient and transfer amount.
           </p>
         </div>
       )}

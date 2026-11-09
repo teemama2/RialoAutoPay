@@ -1,4 +1,5 @@
-﻿import { PublicKey } from "@rialo/ts-cdk";
+﻿
+import { PublicKey } from "@rialo/ts-cdk";
 import { deriveSubscriptionAddress } from "./subscriptionBuilder";
 
 type JsonRecord = Record<string, unknown>;
@@ -6,8 +7,9 @@ type JsonRecord = Record<string, unknown>;
 export type SignatureInfo = {
   signature: string;
   blockHeight: bigint;
-  blockTime: bigint;
-  err: unknown;
+  blockTime: bigint | null;
+  executionStatus: "success" | "failed" | "unknown";
+  err?: unknown;
 };
 
 export type TriggeredTransaction = {
@@ -194,17 +196,30 @@ async function readAddressHistory(
         const time =
           row.blockTime ?? row.block_time;
 
-        if (height == null || time == null) {
+        if (height == null) {
           throw new Error(
-            "A transaction-history entry is missing its block height or time.",
+            "A transaction-history entry is missing its block height.",
           );
         }
+
+        // Do not assume that an omitted err field means success.
+        const hasErrorField =
+          Object.prototype.hasOwnProperty.call(row, "err");
+
+        const executionStatus: SignatureInfo["executionStatus"] =
+          !hasErrorField || row.err === undefined
+            ? "unknown"
+            : row.err === null
+              ? "success"
+              : "failed";
 
         return {
           signature: row.signature,
           blockHeight: BigInt(String(height)),
-          blockTime: BigInt(String(time)),
-          err: row.err ?? null,
+          blockTime:
+            time == null ? null : BigInt(String(time)),
+          executionStatus,
+          ...(hasErrorField ? { err: row.err } : {}),
         };
       },
     );
