@@ -1,0 +1,12 @@
+[package]
+name = "rialo-subscription-reference"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rialo-subscriber-interface = "=0.18.1"
+rialo-types = "=0.18.1"
+rialo-s-pubkey = "=0.18.1"
+rialo-s-instruction = "=0.18.1"
+rialo-s-program = "=0.18.1"
+bincode = "1.3.3"

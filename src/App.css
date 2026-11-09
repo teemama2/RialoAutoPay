@@ -1,0 +1,156 @@
+
+:root {
+  font-family: Inter, system-ui, sans-serif;
+  color: #e9edf5;
+  background: #0b1020;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button {
+  font: inherit;
+}
+
+.dashboard {
+  width: min(100% - 32px, 1000px);
+  margin: 0 auto;
+  padding: 48px 0;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 36px;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(28px, 5vw, 40px);
+  letter-spacing: -1.5px;
+}
+
+h2 {
+  margin-top: 0;
+}
+
+p {
+  color: #a6b1c7;
+  line-height: 1.7;
+}
+
+.network-card,
+.account-card,
+.feature-card {
+  margin-bottom: 20px;
+  padding: 24px;
+  border: 1px solid #27334c;
+  border-radius: 16px;
+  background: #131b2e;
+}
+
+.network-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.network-card p {
+  margin-bottom: 0;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #eab308;
+}
+
+.label {
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+code {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #9cc7ff;
+}
+
+.account-card h3 {
+  font-size: 24px;
+}
+
+.notice {
+  padding: 12px;
+  border-radius: 8px;
+  background: #202b42;
+  font-size: 14px;
+}
+
+@media (max-width: 560px) {
+  .dashboard {
+    padding-top: 28px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+
+.account-card form {
+  display: grid;
+  gap: 10px;
+}
+
+.account-card label {
+  margin-top: 10px;
+  color: #cbd5e1;
+  font-size: 14px;
+}
+
+.account-card input,
+.account-card select {
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #35435c;
+  border-radius: 8px;
+  background: #0b1020;
+  color: #e9edf5;
+  font: inherit;
+}
+
+.account-card form button {
+  margin-top: 16px;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.account-card form button:hover {
+  background: #1d4ed8;
+}
+
+.account-card form button:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 3px;
+}
