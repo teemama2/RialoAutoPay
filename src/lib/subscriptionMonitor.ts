@@ -650,14 +650,21 @@ export async function verifyTriggeredTransaction(
     );
   }
 
+  if (
+    result.meta == null ||
+    typeof result.meta !== "object" ||
+    Array.isArray(result.meta)
+  ) {
+    throw new Error(
+      "The transaction response is missing its execution metadata.",
+    );
+  }
+
   const transaction = asRecord(result.transaction);
   const meta = asRecord(result.meta);
 
-  if (!("err" in meta)) {
-    throw new Error(
-      "The transaction response is missing its execution result.",
-    );
-  }
+  // Rialo's SDK type makes meta.err optional: successful transactions
+  // may omit the field entirely. A present non-null error means failure.
 
   const blockHeight =
     result.block_height ?? result.blockHeight;
@@ -723,6 +730,37 @@ export async function verifyTriggeredTransaction(
     );
   }
 
+  // Include cross-program invocation instructions. Rialo's SDK type
+  // describes each entry as { instructionIndex, instruction }, while
+  // some RPC responses use grouped { index, instructions } records.
+  const rawInnerInstructions =
+    meta.innerInstructions ?? meta.inner_instructions ?? [];
+
+  if (!Array.isArray(rawInnerInstructions)) {
+    throw new Error(
+      "The transaction response contains an invalid inner-instruction list.",
+    );
+  }
+
+  const allInstructions: unknown[] = [...rawInstructions];
+
+  for (const entry of rawInnerInstructions) {
+    const wrapper = asRecord(entry);
+
+    if (wrapper.instruction != null) {
+      allInstructions.push(wrapper.instruction);
+      continue;
+    }
+
+    if (Array.isArray(wrapper.instructions)) {
+      allInstructions.push(...wrapper.instructions);
+      continue;
+    }
+
+    // Also accept a direct compiled inner instruction.
+    allInstructions.push(entry);
+  }
+
   const accountKeys = rawKeys.map((key: unknown) => {
     if (typeof key === "string") {
       return key;
@@ -741,7 +779,7 @@ export async function verifyTriggeredTransaction(
   const matchingTransferAmounts: bigint[] = [];
   let malformedTransferFound = false;
 
-  for (const item of rawInstructions) {
+  for (const item of allInstructions) {
     const instruction = asRecord(item);
 
     const programIdIndex = Number(
@@ -761,7 +799,15 @@ export async function verifyTriggeredTransaction(
       continue;
     }
 
-    const accountIndices = instruction.accounts;
+    const rawAccountIndices =
+      instruction.accounts ??
+      instruction.accountKeyIndexes ??
+      instruction.account_key_indexes;
+
+    const accountIndices =
+      rawAccountIndices instanceof Uint8Array
+        ? Array.from(rawAccountIndices)
+        : rawAccountIndices;
 
     if (
       !Array.isArray(accountIndices) ||

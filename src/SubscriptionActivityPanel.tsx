@@ -9,7 +9,10 @@ import {
   useSignAndSendTransaction,
 } from "@rialo/frost";
 
-import { fetchSubscriptionActivity } from "./lib/subscriptionMonitor";
+import {
+  fetchSubscriptionActivity,
+  verifyTriggeredTransaction,
+} from "./lib/subscriptionMonitor";
 import { buildNativeUnsubscribeInstruction } from "./lib/subscriptionBuilder";
 import { rialoClient } from "./lib/rialoClient";
 
@@ -20,6 +23,12 @@ type Props = {
 type Activity = Awaited<
   ReturnType<typeof fetchSubscriptionActivity>
 >;
+
+type TriggerVerification = {
+  status: "success" | "failed" | "unverified";
+  blockNumber?: string;
+  error?: string;
+};
 
 function displayError(value: unknown): string {
   if (value == null) {
@@ -45,7 +54,11 @@ export default function SubscriptionActivityPanel({
 
   const [nonce, setNonce] = useState("");
   const [recipientAddress, setRecipientAddress] = useState("");
+  const [expectedAmountRlo, setExpectedAmountRlo] = useState("");
   const [activity, setActivity] = useState<Activity | null>(null);
+  const [triggerVerification, setTriggerVerification] =
+    useState<Record<string, TriggerVerification>>({});
+  const [verificationMessage, setVerificationMessage] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -56,6 +69,8 @@ export default function SubscriptionActivityPanel({
     setError("");
     setMessage("");
     setActivity(null);
+    setTriggerVerification({});
+    setVerificationMessage("");
     setCancelSignature("");
 
     if (!subscriberAddress) {
@@ -83,6 +98,92 @@ export default function SubscriptionActivityPanel({
       );
 
       setActivity(result);
+
+      if (result.triggeredTransactions.length === 0) {
+        setVerificationMessage(
+          "No triggered transactions are available to verify yet.",
+        );
+        return;
+      }
+
+      const effectiveRecipient =
+        recipientAddress.trim() || result.recipientAddress || "";
+
+      if (!effectiveRecipient || !expectedAmountRlo.trim()) {
+        setVerificationMessage(
+          "Triggered history was loaded. Enter the expected recipient and payment amount to verify settlements.",
+        );
+        return;
+      }
+
+      // Limit detailed transaction checks to the ten most recent entries
+      // to avoid sending excessive RPC requests from one refresh.
+      const transactionsToVerify =
+        result.triggeredTransactions.slice(0, 10);
+
+      const verifiedEntries = await Promise.all(
+        transactionsToVerify.map(async (transaction) => {
+          try {
+            const verified = await verifyTriggeredTransaction(
+              transaction.signature,
+              {
+                payerAddress: subscriberAddress,
+                recipientAddress: effectiveRecipient,
+                expectedAmountRlo: expectedAmountRlo.trim(),
+              },
+            );
+
+            return [
+              transaction.signature,
+              {
+                status: verified.status,
+                blockNumber: verified.blockNumber,
+                error: verified.error,
+              } satisfies TriggerVerification,
+            ] as const;
+          } catch (cause) {
+            return [
+              transaction.signature,
+              {
+                status: "unverified",
+                blockNumber: transaction.blockNumber.toString(),
+                error:
+                  cause instanceof Error
+                    ? cause.message
+                    : "Unable to retrieve or verify this transaction.",
+              } satisfies TriggerVerification,
+            ] as const;
+          }
+        }),
+      );
+
+      setTriggerVerification(
+        Object.fromEntries(verifiedEntries),
+      );
+
+      const successCount = verifiedEntries.filter(
+        ([, verification]) => verification.status === "success",
+      ).length;
+
+      const failedCount = verifiedEntries.filter(
+        ([, verification]) => verification.status === "failed",
+      ).length;
+
+      const unavailableCount = verifiedEntries.filter(
+        ([, verification]) => verification.status === "unverified",
+      ).length;
+
+      setVerificationMessage(
+        `Checked ${verifiedEntries.length} triggered transaction(s): ` +
+          `${successCount} verified settlement(s), ` +
+          `${failedCount} verification failure(s), ` +
+          `${unavailableCount} unavailable for verification.` +
+          (
+            result.triggeredTransactions.length > 10
+              ? ` The remaining ${result.triggeredTransactions.length - 10} transaction(s) were not individually checked.`
+              : ""
+          ),
+      );
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -211,6 +312,25 @@ export default function SubscriptionActivityPanel({
         disabled={busy}
       />
 
+      <label className="label" htmlFor="history-amount">
+        Expected payment amount (RLO)
+      </label>
+
+      <input
+        id="history-amount"
+        type="text"
+        inputMode="decimal"
+        value={expectedAmountRlo}
+        onChange={(event) => setExpectedAmountRlo(event.target.value)}
+        placeholder="e.g. 0.001"
+        disabled={busy}
+      />
+
+      <p className="notice">
+        Enter the expected amount to verify the actual transfer instruction
+        against the payer, recipient, and amount.
+      </p>
+
       <button
         type="button"
         onClick={checkActivity}
@@ -312,19 +432,51 @@ export default function SubscriptionActivityPanel({
             </p>
           )}
 
+          {verificationMessage && (
+            <p className="notice" role="status">
+              {verificationMessage}
+            </p>
+          )}
+
           {activity.triggeredTransactions.length === 0 ? (
             <p>
               No triggered transactions were returned by this query.
             </p>
           ) : (
             <ul>
-              {activity.triggeredTransactions.map((tx, index) => (
-                <li key={`${tx.signature}-${index}`}>
-                  <p className="label">Signature</p>
-                  <code>{tx.signature}</code>
-                  <p>Block: {tx.blockNumber.toString()}</p>
-                </li>
-              ))}
+              {activity.triggeredTransactions.map((tx, index) => {
+                const verification =
+                  triggerVerification[tx.signature];
+
+                return (
+                  <li key={`${tx.signature}-${index}`}>
+                    <p className="label">Triggered transaction signature</p>
+                    <code>{tx.signature}</code>
+
+                    <p>
+                      <strong>Block:</strong>{" "}
+                      {tx.blockNumber.toString()}
+                    </p>
+
+                    <p>
+                      <strong>Settlement verification:</strong>{" "}
+                      {verification
+                        ? verification.status === "success"
+                          ? "Verified successfully"
+                          : verification.status === "failed"
+                            ? "Verification failed"
+                            : "Could not verify"
+                        : "Not checked"}
+                    </p>
+
+                    {verification?.error && (
+                      <p className="notice" role="alert">
+                        {verification.error}
+                      </p>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
 
