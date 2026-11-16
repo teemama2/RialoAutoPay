@@ -686,7 +686,7 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
     </span>
 
     {!isLoading && !isError && formatted !== undefined && (
-      <span className="balance-unit">RIA</span>
+      <span className="balance-unit">RLO</span>
     )}
   </div>
 )}
