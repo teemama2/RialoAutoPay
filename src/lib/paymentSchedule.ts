@@ -6,7 +6,12 @@ import type {
 export interface ScheduledPayment {
   paymentNumber: number;
   date: string;
+  timestampRangeMs?: readonly [string, string];
 }
+
+export const TWO_MINUTES_MS = 2 * 60 * 1000;
+export const TWO_MINUTE_TEST_PAYMENT_COUNT = 3;
+export const TWO_MINUTE_TEST_LEAD_MS = 5 * 60 * 1000;
 
 function parseDateOnly(value: string): Date {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -76,6 +81,11 @@ function nextDate(
 
     case "monthly":
       return addMonthsClamped(date, 1);
+
+    case "two_minutes_test":
+      throw new Error(
+        "Use the dedicated two-minute test schedule planner.",
+      );
   }
 }
 
@@ -89,6 +99,12 @@ export function planPaymentDates(
     "frequency" | "startDate" | "endDate" | "maxPayments"
   >,
 ): ScheduledPayment[] {
+  if (rule.frequency === "two_minutes_test") {
+    throw new Error(
+      "Use the dedicated two-minute test schedule planner.",
+    );
+  }
+
   const start = parseDateOnly(rule.startDate);
   const end = parseDateOnly(rule.endDate);
 
@@ -114,6 +130,52 @@ export function planPaymentDates(
     });
 
     current = nextDate(current, rule.frequency);
+  }
+
+  return payments;
+}
+
+/**
+ * Creates three separate two-minute test windows.
+ * Timestamp boundaries are Unix milliseconds.
+ *
+ * Each window is start-inclusive and end-exclusive.
+ * This function only plans payments; it does not submit transactions.
+ */
+export function planTwoMinuteTestPayments(
+  nowMs: number = Date.now(),
+): ScheduledPayment[] {
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+    throw new Error("Invalid current timestamp.");
+  }
+
+  const firstStartMs = nowMs + TWO_MINUTE_TEST_LEAD_MS;
+
+  const payments: ScheduledPayment[] = [];
+
+  for (
+    let index = 0;
+    index < TWO_MINUTE_TEST_PAYMENT_COUNT;
+    index += 1
+  ) {
+    const startMs = firstStartMs + index * TWO_MINUTES_MS;
+    const endMs = startMs + TWO_MINUTES_MS;
+
+    if (
+      !Number.isSafeInteger(startMs) ||
+      !Number.isSafeInteger(endMs)
+    ) {
+      throw new Error("The test schedule exceeds the safe timestamp range.");
+    }
+
+    payments.push({
+      paymentNumber: index + 1,
+      date: formatDate(new Date(startMs)),
+      timestampRangeMs: [
+        String(startMs),
+        String(endMs),
+      ],
+    });
   }
 
   return payments;

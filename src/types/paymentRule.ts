@@ -1,7 +1,8 @@
 export type PaymentFrequency =
   | "daily"
   | "weekly"
-  | "monthly";
+  | "monthly"
+  | "two_minutes_test";
 
 export interface PaymentRule {
   id: string;
@@ -36,6 +37,10 @@ export type ScheduledPaymentRegistrationStatus =
 export interface ScheduledPaymentRegistration {
   paymentNumber: number;
   date: string;
+
+  // Exact millisecond trigger boundaries, stored as strings for JSON compatibility.
+  timestampRangeMs?: readonly [string, string];
+
   nonce: string;
   status: ScheduledPaymentRegistrationStatus;
   subscriptionAddress?: string;

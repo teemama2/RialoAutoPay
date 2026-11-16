@@ -21,7 +21,7 @@ import {
 } from "./lib/subscriptionMonitor";
 
 import {
-  getUtcPaymentTimestampRange,
+  getScheduledPaymentTimestampRange,
   parsePaymentAmountToKelvin,
   SubscriptionVerificationError,
   verifyNativeSubscriptionRegistration,
@@ -304,7 +304,10 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
               nonce: payment.nonce,
               subscriptionAddress: payment.subscriptionAddress,
               amountKelvin: parsePaymentAmountToKelvin(rule.amountRlo),
-              timestampRange: getUtcPaymentTimestampRange(payment.date),
+              timestampRange: getScheduledPaymentTimestampRange(
+                payment.date,
+                payment.timestampRangeMs,
+              ),
             });
 
             scheduledPayments[index] = {
@@ -571,6 +574,10 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
   ];
 
   function readableStatus(status: string) {
+    if (status === "two_minutes_test") {
+      return "Every 2 Minutes (DevNet Test)";
+    }
+
     return status.replace(/_/g, " ");
   }
 
@@ -840,12 +847,22 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
                 (payment) => payment.status === "registered",
               ).length;
 
+              const hasVerifiedRegistrations = scheduledPayments.some(
+                (payment) =>
+                  payment.status === "registered" ||
+                  payment.status === "executed" ||
+                  Boolean(payment.subscriptionAddress) ||
+                  Boolean(payment.creationSignature),
+              );
+
               return (
                 <article className="rule-card" key={rule.id}>
                   <div className="rule-card-header">
                     <div>
                       <span className="eyebrow">
-                        {rule.frequency.toUpperCase()} PAYMENT RULE
+                        {rule.frequency === "two_minutes_test"
+                          ? "EVERY 2 MINUTES (DEVNET TEST)"
+                          : `${rule.frequency.toUpperCase()} PAYMENT RULE`}
                       </span>
 
                       <h3>
@@ -857,7 +874,9 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
                     <span
                       className={`status-pill status-${rule.status}`}
                     >
-                      {readableStatus(rule.status)}
+                      {rule.status === "failed" && !hasVerifiedRegistrations
+                        ? "Registration stopped"
+                        : readableStatus(rule.status)}
                     </span>
                   </div>
 
@@ -914,7 +933,9 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
                       : rule.status === "partially_registered"
                         ? "Some registrations did not complete. Review the individual payment records."
                         : rule.status === "failed"
-                          ? "A rule or payment failure was recorded. Inspect the details below."
+                          ? hasVerifiedRegistrations
+                            ? "A rule or payment failure was recorded. Inspect the details below."
+                            : "No subscription registrations were verified for this attempt. It is separate from the successful three-payment rule."
                           : rule.status === "active"
                             ? "The subscription registrations are verified. Scheduled transfers still require execution verification."
                             : "This rule is not marked as fully completed."}
@@ -938,7 +959,15 @@ function AutoPayDashboard({ walletAddress }: AutoPayDashboardProps) {
                                 <span className="eyebrow">
                                   PAYMENT {payment.paymentNumber}
                                 </span>
-                                <strong>{payment.date} UTC</strong>
+                                <strong>
+                                  {payment.timestampRangeMs
+                                    ? `${new Date(
+                                        Number(payment.timestampRangeMs[0]),
+                                      ).toISOString()} – ${new Date(
+                                        Number(payment.timestampRangeMs[1]),
+                                      ).toISOString()} UTC`
+                                    : `${payment.date} UTC`}
+                                </strong>
                               </div>
 
                               <span

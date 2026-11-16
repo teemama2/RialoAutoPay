@@ -10,6 +10,7 @@ import {
 import {
   assertSubscriptionRecordMatches,
   getUtcPaymentTimestampRange,
+  getScheduledPaymentTimestampRange,
   parsePaymentAmountToKelvin,
   type SubscriptionVerificationInput,
 } from "../src/lib/subscriptionVerification.ts";
@@ -364,6 +365,72 @@ test("Invalid date format is rejected", () => {
   );
 });
 
+// Saved two-minute test-window verification.
+const TEST_START = BigInt(
+  Date.parse(`${PAYMENT_DATE}T12:00:00.123Z`),
+);
+const TEST_END = TEST_START + 120_000n;
+
+test("Existing date-only records retain calendar-day verification", () => {
+  assert.deepEqual(
+    getScheduledPaymentTimestampRange(PAYMENT_DATE),
+    [START, END],
+  );
+});
+
+test("Saved test timestamps restore their exact trigger boundaries", () => {
+  assert.deepEqual(
+    getScheduledPaymentTimestampRange(
+      PAYMENT_DATE,
+      [String(TEST_START), String(TEST_END)],
+    ),
+    [TEST_START, TEST_END],
+  );
+});
+
+test("Saved timestamp millisecond precision is preserved", () => {
+  const range = getScheduledPaymentTimestampRange(
+    PAYMENT_DATE,
+    [String(TEST_START), String(TEST_END)],
+  );
+
+  assert.equal(range[0] % 1000n, 123n);
+  assert.equal(range[1] - range[0], 120_000n);
+});
+
+test("Malformed saved timestamp values are rejected", () => {
+  assert.throws(
+    () =>
+      getScheduledPaymentTimestampRange(
+        PAYMENT_DATE,
+        ["not-a-timestamp", String(TEST_END)],
+      ),
+    /timestamp range is invalid/,
+  );
+});
+
+test("Reversed saved timestamp boundaries are rejected", () => {
+  assert.throws(
+    () =>
+      getScheduledPaymentTimestampRange(
+        PAYMENT_DATE,
+        [String(TEST_END), String(TEST_START)],
+      ),
+    /boundaries are invalid/,
+  );
+});
+
+test("Saved timestamp from a different UTC date is rejected", () => {
+  assert.throws(
+    () =>
+      getScheduledPaymentTimestampRange(
+        "2026-12-05",
+        [String(TEST_START), String(TEST_END)],
+      ),
+    /does not match its scheduled UTC date/,
+  );
+});
+
 console.log("\n==========================================");
-console.log("RESULT: 20 verification tests passed.");
+console.log("RESULT: 26 verification tests expected.");
 console.log("==========================================\n");

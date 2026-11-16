@@ -102,6 +102,57 @@ export function getUtcPaymentTimestampRange(
   ];
 }
 
+/**
+ * Resolves the expected trigger range for a saved payment.
+ * Older records without timestampRangeMs retain calendar-day behaviour.
+ * New test records use their exact persisted millisecond boundaries.
+ */
+export function getScheduledPaymentTimestampRange(
+  paymentDate: string,
+  timestampRangeMs?: readonly [string, string],
+): readonly [bigint, bigint] {
+  if (timestampRangeMs === undefined) {
+    return getUtcPaymentTimestampRange(paymentDate);
+  }
+
+  if (
+    !Array.isArray(timestampRangeMs) ||
+    timestampRangeMs.length !== 2 ||
+    typeof timestampRangeMs[0] !== "string" ||
+    typeof timestampRangeMs[1] !== "string" ||
+    !/^\d+$/.test(timestampRangeMs[0]) ||
+    !/^\d+$/.test(timestampRangeMs[1])
+  ) {
+    throw new Error("Saved payment timestamp range is invalid.");
+  }
+
+  const startMs = BigInt(timestampRangeMs[0]);
+  const endMs = BigInt(timestampRangeMs[1]);
+
+  if (startMs < 0n || endMs <= startMs) {
+    throw new Error("Saved payment timestamp boundaries are invalid.");
+  }
+
+  const startNumber = Number(startMs);
+
+  if (!Number.isSafeInteger(startNumber)) {
+    throw new Error("Saved payment timestamp is outside the supported range.");
+  }
+
+  const startDate = new Date(startNumber);
+
+  if (
+    !Number.isFinite(startDate.getTime()) ||
+    startDate.toISOString().slice(0, 10) !== paymentDate
+  ) {
+    throw new Error(
+      "Saved payment timestamp does not match its scheduled UTC date.",
+    );
+  }
+
+  return [startMs, endMs];
+}
+
 
 type JsonRecord = Record<string, unknown>;
 

@@ -1,5 +1,6 @@
 
 import { useState } from "react";
+import { formatBlockTime } from "./lib/formatBlockTime";
 
 import {
   PublicKey,
@@ -45,35 +46,6 @@ function displayError(value: unknown): string {
   }
 }
 
-/**
- * Converts a Unix timestamp in seconds into a readable UTC date.
- * Does not invent a timestamp when the RPC does not supply one.
- */
-function formatBlockTime(value: bigint | null): string {
-  if (value === null) {
-    return "Not supplied by Rialo RPC";
-  }
-
-  const timestamp = Number(value);
-
-  if (!Number.isSafeInteger(timestamp) || timestamp < 0) {
-    return `Unix timestamp: ${value.toString()}`;
-  }
-
-  const date = new Date(timestamp * 1000);
-
-  if (Number.isNaN(date.getTime())) {
-    return `Unix timestamp: ${value.toString()}`;
-  }
-
-  return (
-    new Intl.DateTimeFormat("en-GB", {
-      dateStyle: "medium",
-      timeStyle: "medium",
-      timeZone: "UTC",
-    }).format(date) + " UTC"
-  );
-}
 
 function executionStatusLabel(
   status: "success" | "failed" | "unknown",

@@ -1,4 +1,9 @@
-import { planPaymentDates } from "./src/lib/paymentSchedule.ts";
+import {
+  planPaymentDates,
+  planTwoMinuteTestPayments,
+  TWO_MINUTES_MS,
+  TWO_MINUTE_TEST_LEAD_MS,
+} from "./src/lib/paymentSchedule.ts";
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(`FAIL: ${message}`);
@@ -80,5 +85,75 @@ try {
   reversedRangeRejected = true;
 }
 assert(reversedRangeRejected, "End date before start date is rejected");
+
+// 7. Two-minute test schedule
+const fixedNow = Date.UTC(2026, 10, 14, 12, 0, 0);
+const testPayments = planTwoMinuteTestPayments(fixedNow);
+
+assert(
+  testPayments.length === 3,
+  "Two-minute test schedule generates exactly 3 payments",
+);
+
+const firstRange = testPayments[0].timestampRangeMs!;
+const secondRange = testPayments[1].timestampRangeMs!;
+const thirdRange = testPayments[2].timestampRangeMs!;
+
+const firstStart = BigInt(firstRange[0]);
+const firstEnd = BigInt(firstRange[1]);
+const secondStart = BigInt(secondRange[0]);
+const secondEnd = BigInt(secondRange[1]);
+const thirdStart = BigInt(thirdRange[0]);
+const thirdEnd = BigInt(thirdRange[1]);
+
+assert(
+  firstStart === BigInt(fixedNow + TWO_MINUTE_TEST_LEAD_MS),
+  "First test payment includes the registration lead time",
+);
+
+assert(
+  firstEnd - firstStart === BigInt(TWO_MINUTES_MS),
+  "First payment has a two-minute trigger window",
+);
+
+assert(
+  secondEnd - secondStart === BigInt(TWO_MINUTES_MS),
+  "Second payment has a two-minute trigger window",
+);
+
+assert(
+  thirdEnd - thirdStart === BigInt(TWO_MINUTES_MS),
+  "Third payment has a two-minute trigger window",
+);
+
+assert(
+  secondStart - firstStart === BigInt(TWO_MINUTES_MS),
+  "Second payment starts two minutes after the first",
+);
+
+assert(
+  thirdStart - secondStart === BigInt(TWO_MINUTES_MS),
+  "Third payment starts two minutes after the second",
+);
+
+assert(
+  testPayments.every(
+    (payment) =>
+      payment.date ===
+      new Date(Number(payment.timestampRangeMs![0]))
+        .toISOString()
+        .slice(0, 10),
+  ),
+  "Test payment dates match their UTC timestamp boundaries",
+);
+
+// 8. Invalid test clock
+let invalidClockRejected = false;
+try {
+  planTwoMinuteTestPayments(Number.NaN);
+} catch {
+  invalidClockRejected = true;
+}
+assert(invalidClockRejected, "Invalid test clock is rejected");
 
 console.log("\nAll schedule tests passed.");

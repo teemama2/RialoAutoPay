@@ -22,9 +22,14 @@ import type {
 } from "./types/paymentRule";
 
 import { rialoClient } from "./lib/rialoClient";
-import { planPaymentDates } from "./lib/paymentSchedule";
+import {
+  planPaymentDates,
+  planTwoMinuteTestPayments,
+  type ScheduledPayment,
+} from "./lib/paymentSchedule";
 import { buildNativeSubscribeInstruction } from "./lib/subscriptionBuilder";
 import {
+  getScheduledPaymentTimestampRange,
   SubscriptionVerificationError,
   verifyNativeSubscriptionRegistration,
 } from "./lib/subscriptionVerification";
@@ -147,11 +152,18 @@ export default function RecurringRuleForm({
   const [registeredCount, setRegisteredCount] = useState(0);
 
   const schedulePreview = useMemo(() => {
-    if (!startDate || !endDate || !maxPayments.trim()) {
-      return { payments: [], error: "" };
-    }
-
     try {
+      if (frequency === "two_minutes_test") {
+        return {
+          payments: planTwoMinuteTestPayments(),
+          error: "",
+        };
+      }
+
+      if (!startDate || !endDate || !maxPayments.trim()) {
+        return { payments: [] as ScheduledPayment[], error: "" };
+      }
+
       const payments = planPaymentDates({
         frequency,
         startDate,
@@ -162,7 +174,7 @@ export default function RecurringRuleForm({
       return { payments, error: "" };
     } catch (cause) {
       return {
-        payments: [],
+        payments: [] as ScheduledPayment[],
         error: errorMessage(cause),
       };
     }
@@ -209,43 +221,77 @@ export default function RecurringRuleForm({
       return;
     }
 
-    if (!startDate || !endDate) {
-      setError("Choose both a start date and an end date.");
-      return;
+    const isTwoMinuteTest = frequency === "two_minutes_test";
+    const limit = isTwoMinuteTest ? 3 : Number(maxPayments);
+
+    let payments: ScheduledPayment[];
+
+    if (isTwoMinuteTest) {
+      // Generate fresh windows at submission time, not from an old preview.
+      payments = planTwoMinuteTestPayments();
+    } else {
+      if (!startDate || !endDate) {
+        setError("Choose both a start date and an end date.");
+        return;
+      }
+
+      if (endDate < startDate) {
+        setError("End date must be on or after the start date.");
+        return;
+      }
+
+      if (
+        !Number.isSafeInteger(limit) ||
+        limit < 1 ||
+        limit > 10000
+      ) {
+        setError("Maximum payments must be between 1 and 10,000.");
+        return;
+      }
+
+      if (schedulePreview.error) {
+        setError(schedulePreview.error);
+        return;
+      }
+
+      payments = schedulePreview.payments;
     }
-
-    if (endDate < startDate) {
-      setError("End date must be on or after the start date.");
-      return;
-    }
-
-    const limit = Number(maxPayments);
-
-    if (
-      !Number.isSafeInteger(limit) ||
-      limit < 1 ||
-      limit > 10000
-    ) {
-      setError("Maximum payments must be between 1 and 10,000.");
-      return;
-    }
-
-    if (schedulePreview.error) {
-      setError(schedulePreview.error);
-      return;
-    }
-
-    const payments = schedulePreview.payments;
 
     if (payments.length === 0) {
-      setError("The selected dates produce no scheduled payments.");
+      setError("The selected settings produce no scheduled payments.");
       return;
     }
 
-    // Validate every date before asking the wallet to register anything.
+    // Validate every trigger window before requesting wallet approval.
     try {
       for (const payment of payments) {
-        getTimestampRange(payment.date);
+        if (isTwoMinuteTest && !payment.timestampRangeMs) {
+          throw new Error(
+            `Test payment ${payment.paymentNumber} has no timestamp window.`,
+          );
+        }
+
+        if (payment.timestampRangeMs) {
+          const range = getScheduledPaymentTimestampRange(
+            payment.date,
+            payment.timestampRangeMs,
+          );
+
+          if (range[0] <= BigInt(Date.now())) {
+            throw new Error(
+              "A test payment window has already started. Generate a fresh test schedule.",
+            );
+          }
+
+          if (range[1] - range[0] !== 120_000n) {
+            throw new Error(
+              "Each test payment must have a two-minute trigger window.",
+            );
+          }
+        } else {
+          getTimestampRange(payment.date);
+        }
+
         makeNonce(crypto.randomUUID(), payment.paymentNumber);
       }
     } catch (cause) {
@@ -259,8 +305,10 @@ export default function RecurringRuleForm({
       recipient: destination.toString(),
       amountRlo: amount.trim(),
       frequency,
-      startDate,
-      endDate,
+      startDate: isTwoMinuteTest ? payments[0].date : startDate,
+      endDate: isTwoMinuteTest
+        ? payments[payments.length - 1].date
+        : endDate,
       maxPayments: limit,
       createdAt: new Date().toISOString(),
     };
@@ -269,6 +317,7 @@ export default function RecurringRuleForm({
       payments.map((payment) => ({
         paymentNumber: payment.paymentNumber,
         date: payment.date,
+        timestampRangeMs: payment.timestampRangeMs,
         nonce: makeNonce(rule.id, payment.paymentNumber),
         status: "pending",
       }));
@@ -287,9 +336,31 @@ export default function RecurringRuleForm({
     // Register the rule immediately so failures and progress remain visible.
     updateRecord(record);
 
+    const freshWindowSummary = isTwoMinuteTest
+      ? "\n\nFresh DevNet trigger windows (UTC):\n" +
+        payments.map((payment) => {
+          const range = payment.timestampRangeMs;
+
+          if (!range) {
+            throw new Error(
+              `Payment ${payment.paymentNumber} has no saved timestamp range.`,
+            );
+          }
+
+          return (
+            `Payment ${payment.paymentNumber}: ` +
+            `${new Date(Number(range[0])).toISOString()} – ` +
+            `${new Date(Number(range[1])).toISOString()}`
+          );
+        }).join("\n")
+      : "";
+
     const approved = window.confirm(
-      `This schedule contains ${payments.length} payment(s). ` +
-        "Each payment requires a separate wallet authorization to register. " +
+      `This schedule contains ${payments.length} payment(s).\n` +
+        `Amount per payment: ${amount.trim()} RLO\n` +
+        `Recipient: ${destination.toString()}` +
+        freshWindowSummary +
+        "\n\nEach payment requires a separate wallet authorization to register. " +
         "If you stop partway through, already registered subscriptions will remain on-chain. Continue?",
     );
 
@@ -321,7 +392,18 @@ export default function RecurringRuleForm({
 
           const currentPayer = PublicKey.fromString(account.address);
           const currentDestination = PublicKey.fromString(rule.recipient);
-          const timestampRange = getTimestampRange(payment.date);
+          const timestampRange = registration.timestampRangeMs
+            ? getScheduledPaymentTimestampRange(
+                payment.date,
+                registration.timestampRangeMs,
+              )
+            : getTimestampRange(payment.date);
+
+          if (timestampRange[0] <= BigInt(Date.now())) {
+            throw new Error(
+              "This payment's trigger window has already started. Registration stopped to avoid a missed test payment.",
+            );
+          }
 
           const transfer = transferInstruction(
             currentPayer,
@@ -571,59 +653,75 @@ export default function RecurringRuleForm({
           <option value="daily">Daily</option>
           <option value="weekly">Weekly</option>
           <option value="monthly">Monthly</option>
+          <option value="two_minutes_test">
+            Every 2 Minutes (DevNet Test)
+          </option>
         </select>
 
-        <label className="form-label" htmlFor="auto-start">
-          Start date (UTC)
-        </label>
-        <input
-          id="auto-start"
-          className="form-control"
-          type="date"
-          value={startDate}
-          onChange={(event) => {
-            setStartDate(event.target.value);
-            clearFeedback();
-          }}
-          required
-          disabled={busy}
-        />
+        {frequency !== "two_minutes_test" && (
+          <>
+            <label className="form-label" htmlFor="auto-start">
+              Start date (UTC)
+            </label>
+            <input
+              id="auto-start"
+              className="form-control"
+              type="date"
+              value={startDate}
+              onChange={(event) => {
+                setStartDate(event.target.value);
+                clearFeedback();
+              }}
+              required
+              disabled={busy}
+            />
 
-        <label className="form-label" htmlFor="auto-end">
-          End date (UTC)
-        </label>
-        <input
-          id="auto-end"
-          className="form-control"
-          type="date"
-          value={endDate}
-          min={startDate || undefined}
-          onChange={(event) => {
-            setEndDate(event.target.value);
-            clearFeedback();
-          }}
-          required
-          disabled={busy}
-        />
+            <label className="form-label" htmlFor="auto-end">
+              End date (UTC)
+            </label>
+            <input
+              id="auto-end"
+              className="form-control"
+              type="date"
+              value={endDate}
+              min={startDate || undefined}
+              onChange={(event) => {
+                setEndDate(event.target.value);
+                clearFeedback();
+              }}
+              required
+              disabled={busy}
+            />
 
-        <label className="form-label" htmlFor="auto-limit">
-          Maximum number of payments
-        </label>
-        <input
-          id="auto-limit"
-          className="form-control"
-          type="number"
-          min="1"
-          max="10000"
-          step="1"
-          value={maxPayments}
-          onChange={(event) => {
-            setMaxPayments(event.target.value);
-            clearFeedback();
-          }}
-          required
-          disabled={busy}
-        />
+            <label className="form-label" htmlFor="auto-limit">
+              Maximum number of payments
+            </label>
+            <input
+              id="auto-limit"
+              className="form-control"
+              type="number"
+              min="1"
+              max="10000"
+              step="1"
+              value={maxPayments}
+              onChange={(event) => {
+                setMaxPayments(event.target.value);
+                clearFeedback();
+              }}
+              required
+              disabled={busy}
+            />
+          </>
+        )}
+
+        {frequency === "two_minutes_test" && (
+          <p className="form-help">
+            DevNet test mode creates exactly 3 separate one-shot payments.
+            Each has a 2-minute UTC trigger window. Each registration
+            requires its own wallet approval. Keep enough test RLO in the
+            payer wallet for all three transfers and network fees.
+          </p>
+        )}
 
         <section
           className="schedule-preview"
@@ -632,7 +730,7 @@ export default function RecurringRuleForm({
         >
           <h3 className="schedule-preview-title">Payment schedule preview</h3>
 
-          {!startDate || !endDate ? (
+          {frequency !== "two_minutes_test" && (!startDate || !endDate) ? (
             <p>Choose a start date and end date to preview payments.</p>
           ) : schedulePreview.error ? (
             <p role="alert">{schedulePreview.error}</p>
@@ -647,7 +745,9 @@ export default function RecurringRuleForm({
 
               <p>
                 Frequency:{" "}
-                {frequency.charAt(0).toUpperCase() + frequency.slice(1)}
+                {frequency === "two_minutes_test"
+                  ? "Every 2 Minutes (DevNet Test)"
+                  : frequency.charAt(0).toUpperCase() + frequency.slice(1)}
               </p>
 
               <div className="schedule-table-wrap">
@@ -655,7 +755,11 @@ export default function RecurringRuleForm({
                   <thead>
                     <tr>
                       <th>Payment</th>
-                      <th>Planned date (UTC)</th>
+                      <th>
+                        {frequency === "two_minutes_test"
+                          ? "Trigger window (UTC)"
+                          : "Planned date (UTC)"}
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -665,7 +769,13 @@ export default function RecurringRuleForm({
                           {payment.paymentNumber}
                         </td>
                         <td>
-                          {formatDate(payment.date)}
+                          {payment.timestampRangeMs
+                            ? `${new Date(
+                                Number(payment.timestampRangeMs[0]),
+                              ).toISOString()} – ${new Date(
+                                Number(payment.timestampRangeMs[1]),
+                              ).toISOString()}`
+                            : formatDate(payment.date)}
                         </td>
                       </tr>
                     ))}
@@ -693,8 +803,10 @@ export default function RecurringRuleForm({
 
           <p className="notice">
             Registration requires wallet approval for each scheduled payment.
-            Dates use UTC calendar-day boundaries. This preview does not itself
-            register or execute transfers.
+            {frequency === "two_minutes_test"
+              ? " Each test window lasts two minutes. The first window is planned five minutes after schedule generation to allow registration approvals. Fresh windows are generated when you submit; the final window can end about eleven minutes after submission."
+              : " Dates use UTC calendar-day boundaries."}
+            {" "}This preview does not itself register or execute transfers.
           </p>
         </section>
 

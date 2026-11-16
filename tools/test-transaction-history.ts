@@ -6,11 +6,37 @@ import {
   postRpc,
 } from "../src/lib/subscriptionMonitor.ts";
 
+import { formatBlockTime } from "../src/lib/formatBlockTime.ts";
+
 const SUBSCRIBER =
   "CtDnA9dNEF5D3nJ2EyUdN1Tvqcjkok5jihrLyuWzZ6Ko";
 
 const RECIPIENT =
   "3f6L7jBBdPEKJf7v1rb9fNLhYetSw85Cwv79srGnsWrZ";
+
+// Block-time display regression tests.
+const FIXED_BLOCK_TIME_MS = Date.UTC(2026, 10, 15, 11, 0, 0);
+
+assert.equal(
+  formatBlockTime(BigInt(FIXED_BLOCK_TIME_MS)),
+  formatBlockTime(BigInt(FIXED_BLOCK_TIME_MS / 1000)),
+  "Seconds and milliseconds must format to the same UTC instant.",
+);
+
+assert.match(
+  formatBlockTime(BigInt(FIXED_BLOCK_TIME_MS)),
+  /15 Nov 2026/,
+  "Millisecond timestamps must not display a year thousands of years ahead.",
+);
+
+assert.equal(
+  formatBlockTime(null),
+  "Not supplied by Rialo RPC",
+);
+
+console.log("PASS: Millisecond block times display the correct UTC date.");
+console.log("PASS: Seconds and milliseconds produce the same display.");
+console.log("PASS: Missing block times remain clearly identified.");
 
 const HISTORY = [
   {

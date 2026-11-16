@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test:subscriptions": "tsx tools/test-subscription-builder.ts && tsx tools/test-subscription-verification.ts && node tools/test-subscription-serialization.mjs",
+    "test:subscriptions": "tsx test-payment-schedule.ts && tsx tools/test-subscription-builder.ts && tsx tools/test-subscription-verification.ts && node tools/test-subscription-serialization.mjs",
     "test:transactions": "tsx tools/test-triggered-transaction.ts && tsx tools/test-transaction-history.ts",
     "start": "node server.mjs",
     "test:server": "node --test tools/test-server.mjs"
